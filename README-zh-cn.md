@@ -130,7 +130,7 @@ let result = rjs_lite::run_agent_tool("let x = 1 + 2; x;");
 println!("{}", result.to_json());
 ```
 
-更多契约说明见 `docs/agent-tool.md`。
+更多契约说明见 `docs/agent-tool-zh-cn.md`。
 
 ## 非套壳说明
 
