@@ -1,0 +1,14 @@
+/target/
+
+# Editor / IDE
+.idea/
+.vscode/
+
+# Logs and local temp files
+*.log
+*.tmp
+*.swp
+
+# OS noise
+.DS_Store
+Thumbs.db

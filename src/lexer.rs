@@ -1,0 +1,255 @@
+use crate::error::{JsError, JsResult, Span};
+use crate::token::{Token, TokenKind, keyword_or_identifier};
+
+pub fn lex(source: &str) -> JsResult<Vec<Token>> {
+    Lexer::new(source).lex()
+}
+
+struct Lexer {
+    chars: Vec<char>,
+    index: usize,
+    byte: usize,
+    line: usize,
+    column: usize,
+    tokens: Vec<Token>,
+}
+
+impl Lexer {
+    fn new(source: &str) -> Self {
+        Self {
+            chars: source.chars().collect(),
+            index: 0,
+            byte: 0,
+            line: 1,
+            column: 1,
+            tokens: Vec::new(),
+        }
+    }
+
+    fn lex(mut self) -> JsResult<Vec<Token>> {
+        while let Some(ch) = self.peek() {
+            match ch {
+                ' ' | '\t' | '\r' | '\n' => {
+                    self.advance();
+                }
+                '0'..='9' => self.number()?,
+                '"' | '\'' => self.string(ch)?,
+                c if is_ident_start(c) => self.identifier(),
+                '+' => self.single(TokenKind::Plus),
+                '-' => self.single(TokenKind::Minus),
+                '*' => self.single(TokenKind::Star),
+                '%' => self.single(TokenKind::Percent),
+                '(' => self.single(TokenKind::LeftParen),
+                ')' => self.single(TokenKind::RightParen),
+                '{' => self.single(TokenKind::LeftBrace),
+                '}' => self.single(TokenKind::RightBrace),
+                ',' => self.single(TokenKind::Comma),
+                ';' => self.single(TokenKind::Semicolon),
+                '.' => self.single(TokenKind::Dot),
+                '!' => self.eq_chain(
+                    TokenKind::Bang,
+                    TokenKind::NotEqual,
+                    TokenKind::StrictNotEqual,
+                ),
+                '=' => self.eq_chain(TokenKind::Assign, TokenKind::Equal, TokenKind::StrictEqual),
+                '<' => self.two(TokenKind::Less, '=', TokenKind::LessEqual),
+                '>' => self.two(TokenKind::Greater, '=', TokenKind::GreaterEqual),
+                '&' => self.double('&', TokenKind::And)?,
+                '|' => self.double('|', TokenKind::Or)?,
+                '/' => self.slash()?,
+                _ => {
+                    return Err(JsError::lex(
+                        format!("unexpected character `{ch}`"),
+                        self.here(),
+                    ));
+                }
+            }
+        }
+        self.tokens.push(Token::new(TokenKind::Eof, self.here()));
+        Ok(self.tokens)
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.index).copied()
+    }
+    fn peek_next(&self) -> Option<char> {
+        self.chars.get(self.index + 1).copied()
+    }
+    fn advance(&mut self) -> Option<char> {
+        let ch = self.peek()?;
+        self.index += 1;
+        self.byte += ch.len_utf8();
+        if ch == '\n' {
+            self.line += 1;
+            self.column = 1;
+        } else {
+            self.column += 1;
+        }
+        Some(ch)
+    }
+    fn here(&self) -> Span {
+        Span::new(self.byte, self.byte, self.line, self.column)
+    }
+    fn span(&self, start: usize, line: usize, column: usize) -> Span {
+        Span::new(start, self.byte, line, column)
+    }
+    fn single(&mut self, kind: TokenKind) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn two(&mut self, single: TokenKind, ch: char, double: TokenKind) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = if self.peek() == Some(ch) {
+            self.advance();
+            double
+        } else {
+            single
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn eq_chain(&mut self, single: TokenKind, double: TokenKind, triple: TokenKind) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = if self.peek() == Some('=') {
+            self.advance();
+            if self.peek() == Some('=') {
+                self.advance();
+                triple
+            } else {
+                double
+            }
+        } else {
+            single
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn double(&mut self, expected: char, kind: TokenKind) -> JsResult<()> {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        if self.peek() != Some(expected) {
+            return Err(JsError::lex(
+                "expected repeated operator",
+                self.span(s, l, c),
+            ));
+        }
+        self.advance();
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+        Ok(())
+    }
+    fn slash(&mut self) -> JsResult<()> {
+        match self.peek_next() {
+            Some('/') => {
+                while self.peek().is_some_and(|c| c != '\n') {
+                    self.advance();
+                }
+                Ok(())
+            }
+            Some('*') => {
+                let (s, l, c) = (self.byte, self.line, self.column);
+                self.advance();
+                self.advance();
+                while let Some(ch) = self.peek() {
+                    if ch == '*' && self.peek_next() == Some('/') {
+                        self.advance();
+                        self.advance();
+                        return Ok(());
+                    }
+                    self.advance();
+                }
+                Err(JsError::lex(
+                    "unterminated block comment",
+                    self.span(s, l, c),
+                ))
+            }
+            _ => {
+                self.single(TokenKind::Slash);
+                Ok(())
+            }
+        }
+    }
+    fn number(&mut self) -> JsResult<()> {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        let mut text = String::new();
+        while let Some(d) = self.peek().filter(|x| x.is_ascii_digit()) {
+            text.push(d);
+            self.advance();
+        }
+        if self.peek() == Some('.') && self.peek_next().is_some_and(|x| x.is_ascii_digit()) {
+            text.push('.');
+            self.advance();
+            while let Some(d) = self.peek().filter(|x| x.is_ascii_digit()) {
+                text.push(d);
+                self.advance();
+            }
+        }
+        let n = text
+            .parse()
+            .map_err(|_| JsError::lex("invalid number", self.span(s, l, c)))?;
+        self.tokens
+            .push(Token::new(TokenKind::Number(n), self.span(s, l, c)));
+        Ok(())
+    }
+    fn string(&mut self, quote: char) -> JsResult<()> {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let mut out = String::new();
+        while let Some(ch) = self.peek() {
+            if ch == quote {
+                self.advance();
+                self.tokens
+                    .push(Token::new(TokenKind::String(out), self.span(s, l, c)));
+                return Ok(());
+            }
+            if ch == '\\' {
+                self.advance();
+                let e = self
+                    .advance()
+                    .ok_or_else(|| JsError::lex("unterminated string", self.span(s, l, c)))?;
+                out.push(match e {
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    other => other,
+                });
+            } else {
+                out.push(ch);
+                self.advance();
+            }
+        }
+        Err(JsError::lex("unterminated string", self.span(s, l, c)))
+    }
+    fn identifier(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        let mut text = String::new();
+        while let Some(ch) = self.peek().filter(|x| is_ident_part(*x)) {
+            text.push(ch);
+            self.advance();
+        }
+        self.tokens
+            .push(Token::new(keyword_or_identifier(text), self.span(s, l, c)));
+    }
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch.is_ascii_alphabetic()
+}
+fn is_ident_part(ch: char) -> bool {
+    is_ident_start(ch) || ch.is_ascii_digit()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn lexes_comments() {
+        let t = lex("let x=1;//x\nconst y='a';").unwrap();
+        assert!(matches!(t[0].kind, TokenKind::Let));
+        assert!(matches!(t[5].kind, TokenKind::Const));
+    }
+    #[test]
+    fn rejects_bad_string() {
+        assert!(lex("'oops").is_err());
+    }
+}
