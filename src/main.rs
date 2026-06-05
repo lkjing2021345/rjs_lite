@@ -17,6 +17,7 @@ fn run() -> Result<(), String> {
             println!("{}", usage());
             Ok(())
         }
+        [flag, source] if flag == "--agent-eval" => execute_agent_tool(source),
         [flag, source] if flag == "-e" || flag == "--eval" => execute(source),
         [path] => {
             let source = fs::read_to_string(path)
@@ -25,6 +26,11 @@ fn run() -> Result<(), String> {
         }
         _ => Err(usage()),
     }
+}
+
+fn execute_agent_tool(source: &str) -> Result<(), String> {
+    println!("{}", rjs_lite::run_agent_tool(source).to_json());
+    Ok(())
 }
 
 fn execute(source: &str) -> Result<(), String> {
@@ -40,5 +46,5 @@ fn execute(source: &str) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "Usage:\n  rjs_lite -e \"let x = 1 + 2; print(x);\"\n  rjs_lite path/to/file.js\n\nA lightweight native Rust JavaScript engine scaffold.".to_string()
+    "Usage:\n  rjs_lite -e \"let x = 1 + 2; print(x);\"\n  rjs_lite --agent-eval \"let x = 1 + 2; x;\"\n  rjs_lite path/to/file.js\n\nA lightweight JavaScript execution runtime for AI Agent tool calls.".to_string()
 }

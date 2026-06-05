@@ -1,8 +1,8 @@
-# rjs_lite
+# rjs_lite: Lightweight Agent JavaScript Execution Runtime
 
-`rjs_lite` is a lightweight JavaScript execution engine written in Rust for the 2026 operating-system contest topic around short-lived, high-frequency JavaScript execution in AI-agent scenarios.
+`rjs_lite` is a lightweight script execution runtime for AI Agent workflows. Its first execution language is a Rust-native JavaScript subset designed for short-lived, high-frequency tool calls.
 
-The project is not a wrapper around QuickJS, Boa, V8, Node.js, or Deno. Current code implements its own hand-written lexer, parser, AST, runtime value model, lexical environment, and tree-walking interpreter.
+The project is not a wrapper around QuickJS, Boa, V8, Node.js, or Deno. Current code implements its own hand-written lexer, parser, AST, runtime value model, lexical environment, tree-walking interpreter, and agent-facing tool result API.
 
 ## Current Status
 
@@ -18,6 +18,7 @@ Currently supported:
 - Function declarations, calls, and `return`
 - Minimal host builtin: `print(value)`
 - CLI execution from inline source or a `.js` file
+- Agent tool mode with structured JSON result output
 - Unit tests for lexer, parser, and interpreter smoke behavior
 
 Not yet supported:
@@ -49,6 +50,18 @@ Show help:
 cargo run -- --help
 ```
 
+Use as an AI Agent tool:
+
+```bash
+cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
+```
+
+Example agent result:
+
+```json
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+```
+
 Example program:
 
 ```javascript
@@ -77,7 +90,23 @@ Core modules:
 - `src/ast.rs`: program, statement, and expression data model
 - `src/value.rs`: runtime values and display behavior
 - `src/interpreter.rs`: lexical scopes, control flow, functions, and builtin calls
+- `src/agent.rs`: agent runtime context, limits, host-function metadata, and structured tool results
 - `src/main.rs`: std-only CLI
+
+## Agent Tool Mode
+
+AI Agents can call `rjs_lite` as a local JavaScript execution tool through `--agent-eval`. The process prints one JSON object to stdout, making success, final value, captured `print` output, and errors easy to parse.
+
+Agent mode is intentionally local and dependency-free. It is not an MCP server, network service, or sandbox guarantee. JavaScript parse/runtime failures are represented as `ok:false` JSON results so agents can handle them as ordinary tool output.
+
+Rust callers can use:
+
+```rust
+let result = rjs_lite::run_agent_tool("let x = 1 + 2; x;");
+println!("{}", result.to_json());
+```
+
+See `docs/agent-tool.md` for the full tool contract.
 
 ## Contest Alignment
 

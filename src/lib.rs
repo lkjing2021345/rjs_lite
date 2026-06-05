@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod ast;
 pub mod error;
 pub mod interpreter;
@@ -6,6 +7,9 @@ pub mod parser;
 pub mod token;
 pub mod value;
 
+pub use agent::{
+    AgentRuntime, AgentToolResult, ExecutionContext, HostFunction, RuntimeLimits, run_agent_tool,
+};
 pub use error::{JsError, JsResult, Span};
 pub use value::Value;
 

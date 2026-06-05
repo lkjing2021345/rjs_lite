@@ -1,18 +1,19 @@
-# rjs_lite
+# rjs_lite：面向 AI Agent 的轻量级 JavaScript 执行 Runtime
 
-`rjs_lite` 是一个基于 Rust 编写的轻量级 JavaScript 执行引擎，面向 2026 操作系统国赛中“短时、高频、即时执行 JS 引擎”的赛题方向。
+`rjs_lite` 是一个面向 AI Agent 工作流的轻量级脚本执行 Runtime。它以 Rust 原生 JavaScript 子集作为第一执行语言，服务于短生命周期、高频工具调用、低依赖本地执行等场景。
 
-本项目不是 QuickJS、Boa、V8、Node.js 或 Deno 的套壳封装。当前代码已经实现自研的词法分析器、语法分析器、AST、运行时值模型、词法作用域环境和树遍历解释器，为后续扩展 ECMAScript 兼容性、test262 测试覆盖率和性能优化打基础。
+本项目不是 QuickJS、Boa、V8、Node.js 或 Deno 的套壳封装。当前代码已经实现自研的词法分析器、语法分析器、AST、运行时值模型、词法作用域环境、树遍历解释器和面向 Agent 的结构化执行结果 API，为后续扩展 ECMAScript 兼容性、test262 测试覆盖率和性能优化打基础。
 
 ## 项目目标
 
-赛题要求实现一个基于 Rust 的轻量级 JS 执行引擎，并以 ECMAScript Test Suite 通过率、性能 benchmark、创新性和非套壳实现作为主要评价指标。
+赛题名称为“面向 AI Agent 的轻量级执行引擎”。本项目将其理解为：给 AI Agent 提供一个本地、轻量、可嵌入的 JavaScript 执行工具，让 Agent 可以把临时脚本交给 Runtime 执行，并获得结构化结果。
 
 本项目当前定位为可运行的 MVP 引擎骨架，重点先完成三件事：
 
 1. 建立原生 JS 引擎核心架构。
 2. 支持基础 JS 语法执行，能通过自带单元测试和 CLI 测试。
-3. 为 test262 接入、对象模型、标准库和性能优化预留清晰演进路线。
+3. 提供 Agent 可直接消费的结构化 JSON 执行结果。
+4. 为 test262 接入、对象模型、标准库和性能优化预留清晰演进路线。
 
 ## 当前支持能力
 
@@ -26,6 +27,8 @@
 - 函数声明、函数调用和 `return`
 - 最小宿主内置函数：`print(value)`
 - CLI 执行内联源码或 `.js` 文件
+- `--agent-eval` Agent 工具模式，输出结构化 JSON 结果
+- `AgentRuntime`、`ExecutionContext`、`RuntimeLimits` 和 `run_agent_tool` Rust API
 - lexer、parser、interpreter 和 CLI 的基础测试
 
 暂不支持：
@@ -63,6 +66,18 @@ cargo run -- examples/demo.js
 cargo run -- --help
 ```
 
+作为 AI Agent 工具调用：
+
+```bash
+cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
+```
+
+预期输出一行 JSON：
+
+```json
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+```
+
 示例程序：
 
 ```javascript
@@ -91,13 +106,39 @@ JS 源码 -> lexer -> tokens -> parser -> AST -> interpreter -> Value
 - `src/ast.rs`：程序、语句和表达式 AST 数据结构
 - `src/value.rs`：运行时值模型和显示逻辑
 - `src/interpreter.rs`：词法作用域、控制流、函数调用和内置函数执行
+- `src/agent.rs`：Agent 执行上下文、基础限制、宿主函数元信息和结构化工具结果
 - `src/main.rs`：无第三方依赖的命令行入口
+
+## Agent 工具模式
+
+从 AI Agent 视角看，`rjs_lite` 可以作为一个本地 JS 执行 tool。Agent 将短小 JavaScript 片段传给 `--agent-eval`，Runtime 执行后返回一个 JSON 对象，包含是否成功、最终值、`print` 输出和错误信息。
+
+字段说明：
+
+- `ok`：JS 执行是否成功
+- `request_id`：执行上下文 ID，CLI 默认是 `local`
+- `value`：最终返回值的字符串形式，失败时为 `null`
+- `value_type`：运行时类型，例如 `number`、`string`、`boolean`
+- `output`：通过 `print(value)` 捕获的输出行
+- `output_truncated`：输出是否被限制截断
+- `error`：失败时的诊断信息，成功时为 `null`
+
+Rust 侧可以直接调用：
+
+```rust
+let result = rjs_lite::run_agent_tool("let x = 1 + 2; x;");
+println!("{}", result.to_json());
+```
+
+更多契约说明见 `docs/agent-tool.md`。
 
 ## 非套壳说明
 
 项目当前没有依赖任何外部 JS 引擎，也没有通过子进程调用 Node.js、Deno、QuickJS 或 Boa。
 
 当前解释执行链路全部在 Rust 项目内部完成：源码由本项目 lexer 切分为 token，再由 parser 生成 AST，最后由 interpreter 执行 AST 并返回运行时值。
+
+Agent 工具层同样不调用外部 JS 引擎。`--agent-eval` 只是把本项目内部解释器的结果包装为 Agent 更容易解析的 JSON。
 
 ## 面向赛题的后续路线
 
@@ -107,19 +148,22 @@ JS 源码 -> lexer -> tokens -> parser -> AST -> interpreter -> Value
 2. 补齐常用标准库对象和函数。
 3. 接入 test262 runner，记录测试通过率和失败分类。
 4. 优先覆盖 AI agent 场景中高频使用的 JS 子集。
+5. 扩展 HostFunction 注册机制，让 Agent 能显式挂载安全可控的宿主能力。
 
 性能 benchmark 方向：
 
 1. 增加算术、循环、函数调用、对象访问等微基准。
 2. 在解释器稳定后引入字节码编译和 VM 执行层。
 3. 参考 JetStream 类 workload 设计短时执行性能测试。
-4. 优化启动时间、内存占用和解释器热路径。
+4. 增加 Agent workload：冷启动、重复短脚本、JSON 数据转换、宿主函数调用。
+5. 优化启动时间、内存占用和解释器热路径。
 
 创新性方向：
 
 1. 保持原生 Rust 实现，避免套壳。
 2. 针对短生命周期脚本执行优化，而不是复制浏览器重量级引擎假设。
-3. 探索 agent 场景下的宿主 API、沙箱和资源限制能力。
+3. 通过 `AgentRuntime` 和 `ExecutionContext` 把 JS 引擎包装成 Agent 可调用工具。
+4. 探索 agent 场景下的宿主 API、沙箱和资源限制能力。
 
 ## 开发与验证
 
