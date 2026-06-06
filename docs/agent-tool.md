@@ -18,6 +18,8 @@ Example output:
 
 Agent mode always exits successfully when the tool process itself runs. JavaScript parse/runtime failures are encoded in the JSON result with `ok:false`.
 
+Agent mode applies the default runtime limits: source text is capped at 64 KiB, captured output is capped at 256 lines, and nested user-defined function calls are stopped after 64 frames.
+
 ## Result Fields
 
 - `ok`: whether JavaScript execution succeeded.
@@ -43,6 +45,7 @@ let runtime = rjs_lite::AgentRuntime::new(rjs_lite::ExecutionContext {
     limits: rjs_lite::RuntimeLimits {
         max_source_bytes: 64 * 1024,
         max_output_lines: 256,
+        max_call_depth: 64,
     },
     host_functions: vec![rjs_lite::HostFunction {
         name: "print".to_string(),
@@ -59,6 +62,7 @@ let result = runtime.run("print(42);");
 ## Limitations
 
 - Supports only the documented MVP JavaScript subset.
+- Stops agent-mode execution after the configured call depth limit.
 - Does not claim full ECMAScript compatibility.
 - Does not claim test262 pass-rate coverage yet.
 - Does not provide a security sandbox guarantee.

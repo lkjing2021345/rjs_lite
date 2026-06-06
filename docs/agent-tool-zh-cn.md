@@ -18,6 +18,8 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 
 只要工具进程自身成功运行，Agent 模式总是成功退出。JavaScript 解析或运行时失败会以 `ok:false` 编码在 JSON 结果中。
 
+Agent 模式会应用默认运行时限制：源代码上限为 64 KiB，捕获输出上限为 256 行，嵌套用户自定义函数调用会在 64 帧后停止。
+
 ## 结果字段
 
 - `ok`：JavaScript 执行是否成功。
@@ -43,6 +45,7 @@ let runtime = rjs_lite::AgentRuntime::new(rjs_lite::ExecutionContext {
     limits: rjs_lite::RuntimeLimits {
         max_source_bytes: 64 * 1024,
         max_output_lines: 256,
+        max_call_depth: 64,
     },
     host_functions: vec![rjs_lite::HostFunction {
         name: "print".to_string(),
@@ -59,6 +62,7 @@ let result = runtime.run("print(42);");
 ## 限制
 
 - 只支持已文档化的 MVP JavaScript 子集。
+- Agent 模式会在配置的调用深度限制后停止执行。
 - 不声称具备完整 ECMAScript 兼容性。
 - 尚不声称具备 test262 通过率覆盖。
 - 不提供安全沙箱保证。

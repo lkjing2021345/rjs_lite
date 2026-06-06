@@ -62,16 +62,28 @@ enum Flow {
 pub struct Interpreter {
     env: Rc<RefCell<Env>>,
     output: Vec<String>,
+    max_call_depth: Option<usize>,
+    call_depth: usize,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
+        Self::new_with_call_depth_limit(None)
+    }
+
+    pub fn with_call_depth_limit(max_call_depth: usize) -> Self {
+        Self::new_with_call_depth_limit(Some(max_call_depth))
+    }
+
+    fn new_with_call_depth_limit(max_call_depth: Option<usize>) -> Self {
         let env = Env::new();
         env.borrow_mut()
             .define("print".into(), Value::NativeFunction("print", 1), false);
         Self {
             env,
             output: Vec::new(),
+            max_call_depth,
+            call_depth: 0,
         }
     }
 
@@ -263,6 +275,7 @@ impl Interpreter {
                         args.len()
                     )));
                 }
+                self.enter_call()?;
                 let previous = self.env.clone();
                 self.env = Env::child(previous.clone());
                 for (name, value) in function.params.into_iter().zip(args) {
@@ -270,6 +283,7 @@ impl Interpreter {
                 }
                 let result = self.eval_statements(&function.body);
                 self.env = previous;
+                self.leave_call();
                 match result? {
                     Flow::Value(v) | Flow::Return(v) => Ok(v),
                 }
@@ -279,6 +293,22 @@ impl Interpreter {
                 other.type_name()
             ))),
         }
+    }
+
+    fn enter_call(&mut self) -> JsResult<()> {
+        self.call_depth = self.call_depth.saturating_add(1);
+        if self
+            .max_call_depth
+            .is_some_and(|limit| self.call_depth > limit)
+        {
+            self.leave_call();
+            return Err(JsError::runtime("call depth limit exceeded"));
+        }
+        Ok(())
+    }
+
+    fn leave_call(&mut self) {
+        self.call_depth = self.call_depth.saturating_sub(1);
     }
 }
 
