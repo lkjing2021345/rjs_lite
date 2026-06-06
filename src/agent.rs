@@ -1,4 +1,4 @@
-use crate::{JsError, Value, run_source_with_output};
+use crate::{JsError, Value, run_source_with_limited_output};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeLimits {
@@ -64,20 +64,16 @@ impl AgentRuntime {
             );
         }
 
-        match run_source_with_output(source) {
-            Ok((value, mut output)) => {
-                let output_truncated = output.len() > self.context.limits.max_output_lines;
-                output.truncate(self.context.limits.max_output_lines);
-                AgentToolResult {
-                    ok: true,
-                    request_id: self.context.request_id.clone(),
-                    value_type: Some(value.type_name()),
-                    value: Some(value),
-                    output,
-                    output_truncated,
-                    error: None,
-                }
-            }
+        match run_source_with_limited_output(source, self.context.limits.max_output_lines) {
+            Ok((value, output, output_truncated)) => AgentToolResult {
+                ok: true,
+                request_id: self.context.request_id.clone(),
+                value_type: Some(value.type_name()),
+                value: Some(value),
+                output,
+                output_truncated,
+                error: None,
+            },
             Err(error) => AgentToolResult::failure(self.context.request_id.clone(), error),
         }
     }
@@ -215,5 +211,22 @@ mod tests {
         let result = runtime.run("print(1);");
         assert!(!result.ok);
         assert!(result.error.unwrap().contains("limit"));
+    }
+
+    #[test]
+    fn agent_runtime_truncates_output_while_running() {
+        let runtime = AgentRuntime::new(ExecutionContext {
+            limits: RuntimeLimits {
+                max_source_bytes: 64 * 1024,
+                max_output_lines: 2,
+            },
+            ..ExecutionContext::default()
+        });
+
+        let result = runtime.run("print(1); print(2); print(3);");
+
+        assert!(result.ok);
+        assert_eq!(result.output, vec!["1".to_string(), "2".to_string()]);
+        assert!(result.output_truncated);
     }
 }

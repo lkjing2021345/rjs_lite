@@ -62,16 +62,28 @@ enum Flow {
 pub struct Interpreter {
     env: Rc<RefCell<Env>>,
     output: Vec<String>,
+    output_limit: Option<usize>,
+    output_truncated: bool,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
+        Self::new_with_output_limit(None)
+    }
+
+    pub fn with_output_limit(output_limit: usize) -> Self {
+        Self::new_with_output_limit(Some(output_limit))
+    }
+
+    fn new_with_output_limit(output_limit: Option<usize>) -> Self {
         let env = Env::new();
         env.borrow_mut()
             .define("print".into(), Value::NativeFunction("print", 1), false);
         Self {
             env,
             output: Vec::new(),
+            output_limit,
+            output_truncated: false,
         }
     }
 
@@ -83,6 +95,10 @@ impl Interpreter {
 
     pub fn take_output(self) -> Vec<String> {
         self.output
+    }
+
+    pub fn take_output_with_truncation(self) -> (Vec<String>, bool) {
+        (self.output, self.output_truncated)
     }
 
     fn eval_statements(&mut self, statements: &[Stmt]) -> JsResult<Flow> {
@@ -252,7 +268,7 @@ impl Interpreter {
                     .cloned()
                     .unwrap_or(Value::Undefined)
                     .to_string();
-                self.output.push(text);
+                self.push_output(text);
                 Ok(Value::Undefined)
             }
             Value::Function(function) => {
@@ -279,6 +295,17 @@ impl Interpreter {
                 other.type_name()
             ))),
         }
+    }
+
+    fn push_output(&mut self, text: String) {
+        if self
+            .output_limit
+            .is_some_and(|limit| self.output.len() >= limit)
+        {
+            self.output_truncated = true;
+            return;
+        }
+        self.output.push(text);
     }
 }
 

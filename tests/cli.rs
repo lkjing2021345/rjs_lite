@@ -47,3 +47,20 @@ fn agent_eval_wraps_parse_error_in_result() {
     assert!(stdout.contains("\"ok\":false"));
     assert!(stdout.contains("parse error"));
 }
+
+#[test]
+fn agent_eval_marks_output_truncated() {
+    let source = (0..257)
+        .map(|i| format!("print({i});"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["--agent-eval", &source])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"ok\":true"));
+    assert!(stdout.contains("\"output_truncated\":true"));
+}
