@@ -17,9 +17,10 @@ Currently supported:
 - Blocks, `if`, `else`, and `while`
 - Function declarations, calls, and `return`
 - Minimal host builtin: `print(value)`
+- Interactive REPL with state preservation across lines
 - CLI execution from inline source or a `.js` file
 - Agent tool mode with structured JSON result output
-- Unit tests for lexer, parser, and interpreter smoke behavior
+- Unit tests for lexer, parser, interpreter, and REPL behavior
 
 Not yet supported:
 
@@ -31,6 +32,31 @@ Not yet supported:
 - JIT, bytecode VM, or advanced optimization pipeline
 
 ## Usage
+
+Start interactive REPL:
+
+```bash
+cargo run
+```
+
+Or explicitly:
+
+```bash
+cargo run -- --repl
+```
+
+In the REPL, type JavaScript line by line. Variables persist across lines. Use `.exit` or `.quit` to leave, or press Ctrl+D.
+
+```text
+rjs_lite REPL. Type .exit or .quit to exit.
+rjs> let x = 1;
+rjs> let y = 2;
+rjs> x + y;
+3
+rjs> print(x);
+1
+rjs> .exit
+```
 
 Run inline JavaScript:
 

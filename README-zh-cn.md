@@ -26,10 +26,11 @@
 - 代码块、`if`、`else`、`while`
 - 函数声明、函数调用和 `return`
 - 最小宿主内置函数：`print(value)`
+- 交互式 REPL，跨行保留变量状态
 - CLI 执行内联源码或 `.js` 文件
 - `--agent-eval` Agent 工具模式，输出结构化 JSON 结果
 - `AgentRuntime`、`ExecutionContext`、`RuntimeLimits` 和 `run_agent_tool` Rust API
-- lexer、parser、interpreter 和 CLI 的基础测试
+- lexer、parser、interpreter 和 REPL 的基础测试
 
 暂不支持：
 
@@ -41,6 +42,31 @@
 - JIT、字节码虚拟机和高级优化流水线
 
 ## 快速开始
+
+启动交互式 REPL：
+
+```bash
+cargo run
+```
+
+或显式指定：
+
+```bash
+cargo run -- --repl
+```
+
+在 REPL 中逐行输入 JavaScript 代码，变量跨行保持可用。输入 `.exit` 或 `.quit` 退出，也可按 Ctrl+D。
+
+```text
+rjs_lite REPL. Type .exit or .quit to exit.
+rjs> let x = 1;
+rjs> let y = 2;
+rjs> x + y;
+3
+rjs> print(x);
+1
+rjs> .exit
+```
 
 执行内联 JS：
 

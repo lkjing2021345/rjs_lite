@@ -81,8 +81,8 @@ impl Interpreter {
         }
     }
 
-    pub fn take_output(self) -> Vec<String> {
-        self.output
+    pub fn take_output(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.output)
     }
 
     fn eval_statements(&mut self, statements: &[Stmt]) -> JsResult<Flow> {
