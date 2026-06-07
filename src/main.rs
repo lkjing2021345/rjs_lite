@@ -40,10 +40,10 @@ fn repl() -> Result<(), String> {
     let stdin = io::stdin();
     let mut line = String::new();
 
-    println!("rjs_lite REPL. 输入 .exit 或 .quit 以退出");
+    println!("rjs_lite REPL，输入“.exit”或“.quit”以退出。");
 
     loop {
-        print!("rjs> ");
+        print!(">>u> ");
         io::stdout().flush().map_err(|e| e.to_string())?;
 
         line.clear();
@@ -53,7 +53,7 @@ fn repl() -> Result<(), String> {
             break;
         }
 
-        let trimmed = line.trim();
+        let trimmed: &str = line.trim();
         if trimmed.is_empty() {
             continue;
         }

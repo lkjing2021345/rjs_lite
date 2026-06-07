@@ -157,3 +157,151 @@ fn repl_flag_starts_repl() {
         "should show banner: {stdout}"
     );
 }
+
+#[test]
+fn repl_multiline_function() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, "function add(a, b) {{").unwrap();
+    writeln!(stdin, "  return a + b;").unwrap();
+    writeln!(stdin, "}}").unwrap();
+    writeln!(stdin, "add(3, 4);").unwrap();
+    writeln!(stdin, ".exit").unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains('7'), "should contain 7, got: {stdout}");
+}
+
+#[test]
+fn repl_multiline_if() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, "let x = 10;").unwrap();
+    writeln!(stdin, "if (x > 5) {{").unwrap();
+    writeln!(stdin, "  1;").unwrap();
+    writeln!(stdin, "}} else {{").unwrap();
+    writeln!(stdin, "  2;").unwrap();
+    writeln!(stdin, "}}").unwrap();
+    writeln!(stdin, ".exit").unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains('1'), "should contain 1, got: {stdout}");
+}
+
+#[test]
+fn repl_multiline_error_clears_buffer() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, "function bad() {{").unwrap();
+    writeln!(stdin, "  let = ;").unwrap();
+    writeln!(stdin, "}}").unwrap();
+    writeln!(stdin, "let ok = 1;").unwrap();
+    writeln!(stdin, "ok;").unwrap();
+    writeln!(stdin, ".exit").unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("parse error"),
+        "should show parse error on stderr: {stderr}"
+    );
+    assert!(
+        stdout.contains('1'),
+        "should continue and print 1: {stdout}"
+    );
+}
+
+#[test]
+fn repl_dot_vars_lists_variables() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, "let x = 1;").unwrap();
+    writeln!(stdin, "const y = 2;").unwrap();
+    writeln!(stdin, ".vars").unwrap();
+    writeln!(stdin, ".exit").unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("let x"), "should show let x: {stdout}");
+    assert!(stdout.contains("const y"), "should show const y: {stdout}");
+}
+
+#[test]
+fn repl_dot_reset_clears_state() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, "let x = 42;").unwrap();
+    writeln!(stdin, ".reset").unwrap();
+    writeln!(stdin, "x;").unwrap();
+    writeln!(stdin, ".exit").unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("undefined variable"),
+        "should show undefined variable error: {stderr}"
+    );
+}
+
+#[test]
+fn repl_dot_help_shows_commands() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let stdin = child.stdin.as_mut().unwrap();
+    writeln!(stdin, ".help").unwrap();
+    writeln!(stdin, ".exit").unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("REPL commands"),
+        "should show commands: {stdout}"
+    );
+    assert!(stdout.contains(".exit"), "should mention .exit: {stdout}");
+    assert!(stdout.contains(".vars"), "should mention .vars: {stdout}");
+    assert!(stdout.contains(".reset"), "should mention .reset: {stdout}");
+}

@@ -17,7 +17,7 @@ Currently supported:
 - Blocks, `if`, `else`, and `while`
 - Function declarations, calls, and `return`
 - Minimal host builtin: `print(value)`
-- Interactive REPL with state preservation across lines
+- Interactive REPL with state preservation, multi-line input, and commands
 - CLI execution from inline source or a `.js` file
 - Agent tool mode with structured JSON result output
 - Unit tests for lexer, parser, interpreter, and REPL behavior
@@ -45,18 +45,27 @@ Or explicitly:
 cargo run -- --repl
 ```
 
-In the REPL, type JavaScript line by line. Variables persist across lines. Use `.exit` or `.quit` to leave, or press Ctrl+D.
+In the REPL, type JavaScript line by line. Variables persist across lines. Multi-line input is supported — the prompt changes to `...` while braces or parentheses are unbalanced. Use `.exit` or `.quit` to leave, or press Ctrl+D.
 
 ```text
-rjs_lite REPL. Type .exit or .quit to exit.
-rjs> let x = 1;
-rjs> let y = 2;
-rjs> x + y;
-3
-rjs> print(x);
-1
-rjs> .exit
+rjs_lite REPL. Type .exit or .quit to exit. Type .help for commands.
+>>> function add(a, b) {
+...   return a + b;
+... }
+>>> add(3, 4);
+7
+>>> .exit
 ```
+
+REPL commands:
+
+| Command | Description |
+|---------|-------------|
+| `.exit`, `.quit` | Exit the REPL |
+| `.help` | Show available commands |
+| `.clear` | Clear the screen |
+| `.reset` | Reset interpreter state (clear all variables) |
+| `.vars` | List defined variables with their declaration kind |
 
 Run inline JavaScript:
 
