@@ -223,6 +223,11 @@ impl Parser {
                 op: UnaryOp::Negate,
                 expr: Box::new(self.unary()?),
             })
+        } else if self.eat(&TokenKind::TypeOf) {
+            Ok(Expr::Unary {
+                op: UnaryOp::TypeOf,
+                expr: Box::new(self.unary()?),
+            })
         } else {
             self.call()
         }

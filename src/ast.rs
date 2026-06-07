@@ -60,6 +60,7 @@ pub enum Expr {
 pub enum UnaryOp {
     Negate,
     Not,
+    TypeOf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

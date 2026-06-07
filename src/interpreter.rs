@@ -176,13 +176,17 @@ impl Interpreter {
                 self.env.borrow_mut().assign(name, value.clone())?;
                 Ok(value)
             }
-            Expr::Unary { op, expr } => {
-                let value = self.eval_expr(expr)?;
-                match op {
-                    UnaryOp::Not => Ok(Value::Bool(!value.is_truthy())),
-                    UnaryOp::Negate => Ok(Value::Number(-number(value)?)),
+            Expr::Unary { op, expr } => match op {
+                UnaryOp::Not => {
+                    let value = self.eval_expr(expr)?;
+                    Ok(Value::Bool(!value.is_truthy()))
                 }
-            }
+                UnaryOp::Negate => {
+                    let value = self.eval_expr(expr)?;
+                    Ok(Value::Number(-number(value)?))
+                }
+                UnaryOp::TypeOf => Ok(Value::String(self.eval_typeof(expr)?.to_string())),
+            },
             Expr::Binary {
                 left,
                 op: BinaryOp::And,
@@ -244,6 +248,21 @@ impl Interpreter {
         }
     }
 
+    fn eval_typeof(&mut self, expr: &Expr) -> JsResult<&'static str> {
+        if let Expr::Identifier(name) = expr {
+            return Ok(self
+                .env
+                .borrow()
+                .get(name)
+                .as_ref()
+                .map(typeof_name)
+                .unwrap_or("undefined"));
+        }
+
+        let value = self.eval_expr(expr)?;
+        Ok(typeof_name(&value))
+    }
+
     fn call(&mut self, callee: Value, args: Vec<Value>) -> JsResult<Value> {
         match callee {
             Value::NativeFunction("print", 1) => {
@@ -296,6 +315,17 @@ fn number(value: Value) -> JsResult<f64> {
             "expected number, got {}",
             value.type_name()
         )))
+    }
+}
+
+fn typeof_name(value: &Value) -> &'static str {
+    match value {
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Bool(_) => "boolean",
+        Value::Null => "object",
+        Value::Undefined => "undefined",
+        Value::Function(_) | Value::NativeFunction(_, _) => "function",
     }
 }
 
