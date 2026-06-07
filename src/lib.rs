@@ -51,4 +51,14 @@ mod tests {
         "#;
         assert_eq!(run_source(source).unwrap(), Value::Number(10.0));
     }
+
+    #[test]
+    fn evaluates_uninitialized_let_as_undefined() {
+        assert_eq!(run_source("let x; x;").unwrap(), Value::Undefined);
+    }
+
+    #[test]
+    fn uninitialized_let_can_be_assigned_later() {
+        assert_eq!(run_source("let x; x = 4; x;").unwrap(), Value::Number(4.0));
+    }
 }

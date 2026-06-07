@@ -42,8 +42,16 @@ impl Parser {
     }
     fn var_decl(&mut self, mutable: bool) -> JsResult<Stmt> {
         let name = self.identifier()?;
-        self.expect(&TokenKind::Assign)?;
-        let value = self.expression()?;
+        let value = if self.eat(&TokenKind::Assign) {
+            self.expression()?
+        } else if mutable {
+            if !self.at_statement_end() {
+                return Err(self.error("expected statement end after uninitialized let"));
+            }
+            Expr::Undefined
+        } else {
+            return Err(self.error("const declarations must be initialized"));
+        };
         self.optional_semicolon();
         Ok(Stmt::VarDecl {
             name,
@@ -276,6 +284,11 @@ impl Parser {
     fn optional_semicolon(&mut self) {
         self.eat(&TokenKind::Semicolon);
     }
+    fn at_statement_end(&self) -> bool {
+        self.at(&TokenKind::Semicolon)
+            || self.at(&TokenKind::RightBrace)
+            || self.at(&TokenKind::Eof)
+    }
     fn eat(&mut self, kind: &TokenKind) -> bool {
         if self.at(kind) {
             self.pos += 1;
@@ -324,5 +337,32 @@ mod tests {
     #[test]
     fn parses_function() {
         assert!(parse(lex("function f(x){ return x; } f(1);").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn parses_uninitialized_let() {
+        assert!(parse(lex("let x; x;").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn rejects_uninitialized_const() {
+        let error = parse(lex("const x;").unwrap()).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("const declarations must be initialized")
+        );
+    }
+
+    #[test]
+    fn rejects_uninitialized_let_without_statement_end() {
+        let error = parse(lex("let x 1;").unwrap()).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("expected statement end after uninitialized let")
+        );
     }
 }
