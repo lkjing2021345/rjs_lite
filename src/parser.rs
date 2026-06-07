@@ -32,6 +32,12 @@ impl Parser {
             self.if_stmt()
         } else if self.eat(&TokenKind::While) {
             self.while_stmt()
+        } else if self.eat(&TokenKind::Break) {
+            self.optional_semicolon();
+            Ok(Stmt::Break)
+        } else if self.eat(&TokenKind::Continue) {
+            self.optional_semicolon();
+            Ok(Stmt::Continue)
         } else if self.eat(&TokenKind::LeftBrace) {
             Ok(Stmt::Block(self.block()?))
         } else {

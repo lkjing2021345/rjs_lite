@@ -14,7 +14,7 @@ Currently supported:
 - `let` and `const` bindings
 - Assignment to mutable bindings
 - Arithmetic, comparison, equality, logical, and unary operators
-- Blocks, `if`, `else`, and `while`
+- Blocks, `if`, `else`, `while`, `break`, and `continue`
 - Function declarations, calls, and `return`
 - Minimal host builtin: `print(value)`
 - CLI execution from inline source or a `.js` file

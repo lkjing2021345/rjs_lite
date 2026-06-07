@@ -25,6 +25,8 @@ pub enum Stmt {
         condition: Expr,
         body: Vec<Stmt>,
     },
+    Break,
+    Continue,
     Block(Vec<Stmt>),
     Expr(Expr),
 }

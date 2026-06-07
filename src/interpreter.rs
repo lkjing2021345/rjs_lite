@@ -57,6 +57,8 @@ impl Env {
 enum Flow {
     Value(Value),
     Return(Value),
+    Break,
+    Continue,
 }
 
 pub struct Interpreter {
@@ -78,6 +80,8 @@ impl Interpreter {
     pub fn run(&mut self, program: &Program) -> JsResult<Value> {
         match self.eval_statements(&program.statements)? {
             Flow::Value(v) | Flow::Return(v) => Ok(v),
+            Flow::Break => Err(JsError::runtime("break used outside loop")),
+            Flow::Continue => Err(JsError::runtime("continue used outside loop")),
         }
     }
 
@@ -90,7 +94,7 @@ impl Interpreter {
         for stmt in statements {
             match self.eval_stmt(stmt)? {
                 Flow::Value(v) => last = v,
-                r @ Flow::Return(_) => return Ok(r),
+                flow @ (Flow::Return(_) | Flow::Break | Flow::Continue) => return Ok(flow),
             }
         }
         Ok(Flow::Value(last))
@@ -142,10 +146,14 @@ impl Interpreter {
                     match self.with_child(body)? {
                         Flow::Value(v) => last = v,
                         r @ Flow::Return(_) => return Ok(r),
+                        Flow::Break => break,
+                        Flow::Continue => continue,
                     }
                 }
                 Ok(Flow::Value(last))
             }
+            Stmt::Break => Ok(Flow::Break),
+            Stmt::Continue => Ok(Flow::Continue),
             Stmt::Block(stmts) => self.with_child(stmts),
             Stmt::Expr(expr) => Ok(Flow::Value(self.eval_expr(expr)?)),
         }
@@ -272,6 +280,8 @@ impl Interpreter {
                 self.env = previous;
                 match result? {
                     Flow::Value(v) | Flow::Return(v) => Ok(v),
+                    Flow::Break => Err(JsError::runtime("break used outside loop")),
+                    Flow::Continue => Err(JsError::runtime("continue used outside loop")),
                 }
             }
             other => Err(JsError::runtime(format!(
@@ -309,5 +319,87 @@ mod tests {
             run_source("let x=1; if (x) { 2; } else { 3; }").unwrap(),
             Value::Number(2.0)
         );
+    }
+
+    #[test]
+    fn break_exits_nearest_loop() {
+        assert_eq!(
+            run_source(
+                r#"
+                    let i = 0;
+                    while (i < 10) {
+                        i = i + 1;
+                        if (i == 4) {
+                            break;
+                        }
+                    }
+                    i;
+                "#
+            )
+            .unwrap(),
+            Value::Number(4.0)
+        );
+    }
+
+    #[test]
+    fn continue_skips_to_next_loop_iteration() {
+        assert_eq!(
+            run_source(
+                r#"
+                    let i = 0;
+                    let total = 0;
+                    while (i < 5) {
+                        i = i + 1;
+                        if (i == 3) {
+                            continue;
+                        }
+                        total = total + i;
+                    }
+                    total;
+                "#
+            )
+            .unwrap(),
+            Value::Number(12.0)
+        );
+    }
+
+    #[test]
+    fn break_only_exits_nearest_loop() {
+        assert_eq!(
+            run_source(
+                r#"
+                    let outer = 0;
+                    let hits = 0;
+                    while (outer < 3) {
+                        outer = outer + 1;
+                        let inner = 0;
+                        while (inner < 3) {
+                            inner = inner + 1;
+                            if (inner == 2) {
+                                break;
+                            }
+                            hits = hits + 1;
+                        }
+                    }
+                    hits;
+                "#
+            )
+            .unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn break_outside_loop_is_runtime_error() {
+        let error = run_source("break;").unwrap_err();
+
+        assert!(error.to_string().contains("break used outside loop"));
+    }
+
+    #[test]
+    fn continue_outside_loop_is_runtime_error() {
+        let error = run_source("continue;").unwrap_err();
+
+        assert!(error.to_string().contains("continue used outside loop"));
     }
 }

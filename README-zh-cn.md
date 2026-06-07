@@ -23,7 +23,7 @@
 - `let` 和 `const` 变量声明
 - 对可变绑定进行赋值
 - 算术、比较、相等、逻辑和一元运算符
-- 代码块、`if`、`else`、`while`
+- 代码块、`if`、`else`、`while`、`break` 和 `continue`
 - 函数声明、函数调用和 `return`
 - 最小宿主内置函数：`print(value)`
 - CLI 执行内联源码或 `.js` 文件
