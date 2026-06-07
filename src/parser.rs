@@ -41,11 +41,11 @@ impl Parser {
         }
     }
     fn var_decl(&mut self, mutable: bool) -> JsResult<Stmt> {
-        let name = self.identifier()?;
+        let (name, name_span) = self.identifier_token()?;
         let value = if self.eat(&TokenKind::Assign) {
             self.expression()?
         } else if mutable {
-            if !self.at_statement_end() {
+            if !self.at_statement_end_after(name_span) {
                 return Err(self.error("expected statement end after uninitialized let"));
             }
             Expr::Undefined
@@ -274,9 +274,12 @@ impl Parser {
         }
     }
     fn identifier(&mut self) -> JsResult<String> {
+        self.identifier_token().map(|(name, _)| name)
+    }
+    fn identifier_token(&mut self) -> JsResult<(String, Span)> {
         let token = self.advance().clone();
         if let TokenKind::Identifier(name) = token.kind {
-            Ok(name)
+            Ok((name, token.span))
         } else {
             Err(JsError::parse("expected identifier", token.span))
         }
@@ -284,10 +287,11 @@ impl Parser {
     fn optional_semicolon(&mut self) {
         self.eat(&TokenKind::Semicolon);
     }
-    fn at_statement_end(&self) -> bool {
+    fn at_statement_end_after(&self, previous_span: Span) -> bool {
         self.at(&TokenKind::Semicolon)
             || self.at(&TokenKind::RightBrace)
             || self.at(&TokenKind::Eof)
+            || self.current().span.line > previous_span.line
     }
     fn eat(&mut self, kind: &TokenKind) -> bool {
         if self.at(kind) {
@@ -364,5 +368,10 @@ mod tests {
                 .to_string()
                 .contains("expected statement end after uninitialized let")
         );
+    }
+
+    #[test]
+    fn parses_uninitialized_let_before_newline_statement() {
+        assert!(parse(lex("let x\nx = 1;").unwrap()).is_ok());
     }
 }
