@@ -132,7 +132,7 @@ impl Parser {
         self.assignment()
     }
     fn assignment(&mut self) -> JsResult<Expr> {
-        let expr = self.logical_or()?;
+        let expr = self.conditional()?;
         if self.eat(&TokenKind::Assign) {
             if let Expr::Identifier(name) = expr {
                 return Ok(Expr::Assign {
@@ -142,7 +142,45 @@ impl Parser {
             }
             return Err(self.error("left side of assignment must be an identifier"));
         }
+        let op = if self.eat(&TokenKind::PlusAssign) {
+            Some(BinaryOp::Add)
+        } else if self.eat(&TokenKind::MinusAssign) {
+            Some(BinaryOp::Subtract)
+        } else if self.eat(&TokenKind::StarAssign) {
+            Some(BinaryOp::Multiply)
+        } else if self.eat(&TokenKind::SlashAssign) {
+            Some(BinaryOp::Divide)
+        } else if self.eat(&TokenKind::PercentAssign) {
+            Some(BinaryOp::Remainder)
+        } else {
+            None
+        };
+        if let Some(op) = op {
+            if let Expr::Identifier(name) = expr {
+                return Ok(Expr::CompoundAssign {
+                    name,
+                    op,
+                    value: Box::new(self.assignment()?),
+                });
+            }
+            return Err(self.error("left side of assignment must be an identifier"));
+        }
         Ok(expr)
+    }
+    fn conditional(&mut self) -> JsResult<Expr> {
+        let condition = self.logical_or()?;
+        if self.eat(&TokenKind::Question) {
+            let then_expr = self.expression()?;
+            self.expect(&TokenKind::Colon)?;
+            let else_expr = self.assignment()?;
+            Ok(Expr::Conditional {
+                condition: Box::new(condition),
+                then_expr: Box::new(then_expr),
+                else_expr: Box::new(else_expr),
+            })
+        } else {
+            Ok(condition)
+        }
     }
     fn logical_or(&mut self) -> JsResult<Expr> {
         self.binary(Self::logical_and, &[(TokenKind::Or, BinaryOp::Or)])
@@ -223,27 +261,78 @@ impl Parser {
                 op: UnaryOp::Negate,
                 expr: Box::new(self.unary()?),
             })
+        } else if self.eat(&TokenKind::PlusPlus) {
+            if let Expr::Identifier(name) = self.unary()? {
+                Ok(Expr::Update {
+                    name,
+                    delta: 1.0,
+                    prefix: true,
+                })
+            } else {
+                Err(self.error("increment target must be an identifier"))
+            }
+        } else if self.eat(&TokenKind::MinusMinus) {
+            if let Expr::Identifier(name) = self.unary()? {
+                Ok(Expr::Update {
+                    name,
+                    delta: -1.0,
+                    prefix: true,
+                })
+            } else {
+                Err(self.error("decrement target must be an identifier"))
+            }
         } else {
             self.call()
         }
     }
     fn call(&mut self) -> JsResult<Expr> {
         let mut expr = self.primary()?;
-        while self.eat(&TokenKind::LeftParen) {
-            let mut args = Vec::new();
-            if !self.eat(&TokenKind::RightParen) {
-                loop {
-                    args.push(self.expression()?);
-                    if self.eat(&TokenKind::RightParen) {
-                        break;
+        loop {
+            if self.eat(&TokenKind::LeftParen) {
+                let mut args = Vec::new();
+                if !self.eat(&TokenKind::RightParen) {
+                    loop {
+                        args.push(self.expression()?);
+                        if self.eat(&TokenKind::RightParen) {
+                            break;
+                        }
+                        self.expect(&TokenKind::Comma)?;
                     }
-                    self.expect(&TokenKind::Comma)?;
                 }
+                expr = Expr::Call {
+                    callee: Box::new(expr),
+                    args,
+                };
+            } else if self.eat(&TokenKind::LeftBracket) {
+                let index = self.expression()?;
+                self.expect(&TokenKind::RightBracket)?;
+                expr = Expr::Index {
+                    object: Box::new(expr),
+                    index: Box::new(index),
+                };
+            } else if self.eat(&TokenKind::PlusPlus) {
+                if let Expr::Identifier(name) = expr {
+                    expr = Expr::Update {
+                        name,
+                        delta: 1.0,
+                        prefix: false,
+                    };
+                } else {
+                    return Err(self.error("increment target must be an identifier"));
+                }
+            } else if self.eat(&TokenKind::MinusMinus) {
+                if let Expr::Identifier(name) = expr {
+                    expr = Expr::Update {
+                        name,
+                        delta: -1.0,
+                        prefix: false,
+                    };
+                } else {
+                    return Err(self.error("decrement target must be an identifier"));
+                }
+            } else {
+                break;
             }
-            expr = Expr::Call {
-                callee: Box::new(expr),
-                args,
-            };
         }
         Ok(expr)
     }

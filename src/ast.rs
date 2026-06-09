@@ -41,6 +41,11 @@ pub enum Expr {
         op: UnaryOp,
         expr: Box<Expr>,
     },
+    Conditional {
+        condition: Box<Expr>,
+        then_expr: Box<Expr>,
+        else_expr: Box<Expr>,
+    },
     Binary {
         left: Box<Expr>,
         op: BinaryOp,
@@ -50,9 +55,23 @@ pub enum Expr {
         name: String,
         value: Box<Expr>,
     },
+    CompoundAssign {
+        name: String,
+        op: BinaryOp,
+        value: Box<Expr>,
+    },
+    Update {
+        name: String,
+        delta: f64,
+        prefix: bool,
+    },
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
+    },
+    Index {
+        object: Box<Expr>,
+        index: Box<Expr>,
     },
 }
 

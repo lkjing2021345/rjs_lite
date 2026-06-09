@@ -211,7 +211,7 @@ impl Lexer {
                 ))
             }
             _ => {
-                self.single(TokenKind::Slash);
+                self.op_assign(TokenKind::Slash, TokenKind::SlashAssign);
                 Ok(())
             }
         }

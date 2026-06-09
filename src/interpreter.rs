@@ -176,11 +176,48 @@ impl Interpreter {
                 self.env.borrow_mut().assign(name, value.clone())?;
                 Ok(value)
             }
+            Expr::CompoundAssign { name, op, value } => {
+                let left = self
+                    .env
+                    .borrow()
+                    .get(name)
+                    .ok_or_else(|| JsError::runtime(format!("undefined variable `{name}`")))?;
+                let right = self.eval_expr(value)?;
+                let value = self.binary(left, *op, right)?;
+                self.env.borrow_mut().assign(name, value.clone())?;
+                Ok(value)
+            }
+            Expr::Update {
+                name,
+                delta,
+                prefix,
+            } => {
+                let old = self
+                    .env
+                    .borrow()
+                    .get(name)
+                    .ok_or_else(|| JsError::runtime(format!("undefined variable `{name}`")))?;
+                let old_number = number(old.clone())?;
+                let new_value = Value::Number(old_number + delta);
+                self.env.borrow_mut().assign(name, new_value.clone())?;
+                if *prefix { Ok(new_value) } else { Ok(old) }
+            }
             Expr::Unary { op, expr } => {
                 let value = self.eval_expr(expr)?;
                 match op {
                     UnaryOp::Not => Ok(Value::Bool(!value.is_truthy())),
                     UnaryOp::Negate => Ok(Value::Number(-number(value)?)),
+                }
+            }
+            Expr::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                if self.eval_expr(condition)?.is_truthy() {
+                    self.eval_expr(then_expr)
+                } else {
+                    self.eval_expr(else_expr)
                 }
             }
             Expr::Binary {
@@ -219,6 +256,27 @@ impl Interpreter {
                     .map(|a| self.eval_expr(a))
                     .collect::<JsResult<Vec<_>>>()?;
                 self.call(callee, args)
+            }
+            Expr::Index { object, index } => {
+                let object = self.eval_expr(object)?;
+                let index = self.eval_expr(index)?;
+                match object {
+                    Value::String(text) => {
+                        let idx = number(index)?;
+                        if idx.fract() != 0.0 || idx < 0.0 {
+                            return Ok(Value::Undefined);
+                        }
+                        Ok(text
+                            .chars()
+                            .nth(idx as usize)
+                            .map(|ch| Value::String(ch.to_string()))
+                            .unwrap_or(Value::Undefined))
+                    }
+                    other => Err(JsError::runtime(format!(
+                        "{} is not indexable",
+                        other.type_name()
+                    ))),
+                }
             }
         }
     }
