@@ -10,12 +10,23 @@ pub enum Stmt {
         value: Expr,
         mutable: bool,
     },
+    VarDecls {
+        declarations: Vec<(String, Expr)>,
+        mutable: bool,
+    },
     FunctionDecl {
         name: String,
         params: Vec<String>,
         body: Vec<Stmt>,
     },
     Return(Option<Expr>),
+    Throw(Expr),
+    Try {
+        block: Vec<Stmt>,
+        catch_param: Option<String>,
+        catch_block: Option<Vec<Stmt>>,
+        finally_block: Option<Vec<Stmt>>,
+    },
     If {
         condition: Expr,
         then_branch: Vec<Stmt>,
@@ -25,7 +36,19 @@ pub enum Stmt {
         condition: Expr,
         body: Vec<Stmt>,
     },
+    For {
+        init: Option<Box<Stmt>>,
+        condition: Option<Expr>,
+        update: Option<Expr>,
+        body: Vec<Stmt>,
+    },
+    Switch {
+        discriminant: Expr,
+        cases: Vec<(Expr, Vec<Stmt>)>,
+        default: Vec<Stmt>,
+    },
     Block(Vec<Stmt>),
+    Break,
     Expr(Expr),
 }
 
@@ -36,11 +59,19 @@ pub enum Expr {
     Bool(bool),
     Null,
     Undefined,
+    This,
     Identifier(String),
+    Array(Vec<Expr>),
+    Object(Vec<(String, Expr)>),
+    Function {
+        params: Vec<String>,
+        body: Vec<Stmt>,
+    },
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
     },
+    Typeof(Box<Expr>),
     Conditional {
         condition: Box<Expr>,
         then_expr: Box<Expr>,
@@ -52,22 +83,30 @@ pub enum Expr {
         right: Box<Expr>,
     },
     Assign {
-        name: String,
+        target: Box<Expr>,
         value: Box<Expr>,
     },
     CompoundAssign {
-        name: String,
+        target: Box<Expr>,
         op: BinaryOp,
         value: Box<Expr>,
     },
     Update {
-        name: String,
+        target: Box<Expr>,
         delta: f64,
         prefix: bool,
     },
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
+    },
+    New {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    Member {
+        object: Box<Expr>,
+        property: String,
     },
     Index {
         object: Box<Expr>,
@@ -98,4 +137,5 @@ pub enum BinaryOp {
     GreaterEqual,
     And,
     Or,
+    Instanceof,
 }
