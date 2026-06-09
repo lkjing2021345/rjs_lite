@@ -35,14 +35,18 @@ impl Lexer {
                 '0'..='9' => self.number()?,
                 '"' | '\'' => self.string(ch)?,
                 c if is_ident_start(c) => self.identifier(),
-                '+' => self.single(TokenKind::Plus),
-                '-' => self.single(TokenKind::Minus),
-                '*' => self.single(TokenKind::Star),
-                '%' => self.single(TokenKind::Percent),
+                '+' => self.plus(),
+                '-' => self.minus(),
+                '*' => self.op_assign(TokenKind::Star, TokenKind::StarAssign),
+                '%' => self.op_assign(TokenKind::Percent, TokenKind::PercentAssign),
                 '(' => self.single(TokenKind::LeftParen),
                 ')' => self.single(TokenKind::RightParen),
                 '{' => self.single(TokenKind::LeftBrace),
                 '}' => self.single(TokenKind::RightBrace),
+                '[' => self.single(TokenKind::LeftBracket),
+                ']' => self.single(TokenKind::RightBracket),
+                '?' => self.single(TokenKind::Question),
+                ':' => self.single(TokenKind::Colon),
                 ',' => self.single(TokenKind::Comma),
                 ';' => self.single(TokenKind::Semicolon),
                 '.' => self.single(TokenKind::Dot),
@@ -96,6 +100,49 @@ impl Lexer {
     fn single(&mut self, kind: TokenKind) {
         let (s, l, c) = (self.byte, self.line, self.column);
         self.advance();
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn plus(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = match self.peek() {
+            Some('+') => {
+                self.advance();
+                TokenKind::PlusPlus
+            }
+            Some('=') => {
+                self.advance();
+                TokenKind::PlusAssign
+            }
+            _ => TokenKind::Plus,
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn minus(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = match self.peek() {
+            Some('-') => {
+                self.advance();
+                TokenKind::MinusMinus
+            }
+            Some('=') => {
+                self.advance();
+                TokenKind::MinusAssign
+            }
+            _ => TokenKind::Minus,
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn op_assign(&mut self, single: TokenKind, assign: TokenKind) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = if self.peek() == Some('=') {
+            self.advance();
+            assign
+        } else {
+            single
+        };
         self.tokens.push(Token::new(kind, self.span(s, l, c)));
     }
     fn two(&mut self, single: TokenKind, ch: char, double: TokenKind) {

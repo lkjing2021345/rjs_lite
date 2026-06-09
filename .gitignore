@@ -12,3 +12,13 @@
 # OS noise
 .DS_Store
 Thumbs.db
+
+# pycache
+
+__pycache__/
+
+# test result
+
+test262_result.json
+
+test262/
