@@ -335,7 +335,7 @@ impl Parser {
         } else if self.eat(&TokenKind::Typeof) {
             Ok(Expr::Typeof(Box::new(self.unary()?)))
         } else if self.eat(&TokenKind::New) {
-            let callee = self.unary()?;
+            let callee = self.new_callee()?;
             let args = if self.eat(&TokenKind::LeftParen) { self.arguments()? } else { Vec::new() };
             Ok(Expr::New { callee: Box::new(callee), args })
         } else if self.eat(&TokenKind::PlusPlus) {
@@ -351,6 +351,23 @@ impl Parser {
         } else {
             self.call()
         }
+    }
+
+    fn new_callee(&mut self) -> JsResult<Expr> {
+        let mut expr = self.primary()?;
+        loop {
+            if self.eat(&TokenKind::LeftBracket) {
+                let index = self.expression()?;
+                self.expect(&TokenKind::RightBracket)?;
+                expr = Expr::Index { object: Box::new(expr), index: Box::new(index) };
+            } else if self.eat(&TokenKind::Dot) {
+                let property = self.identifier()?;
+                expr = Expr::Member { object: Box::new(expr), property };
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
     }
 
     fn call(&mut self) -> JsResult<Expr> {

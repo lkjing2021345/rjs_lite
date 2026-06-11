@@ -67,6 +67,7 @@ struct RefTarget {
 
 pub struct Interpreter {
     env: Rc<RefCell<Env>>,
+    closures: HashMap<usize, Rc<RefCell<Env>>>,
     output: Vec<String>,
     global: ObjectRef,
     object_proto: ObjectRef,
@@ -83,7 +84,7 @@ impl Interpreter {
         let function_proto = Object::plain();
         let array_proto = Object::plain();
         let error_proto = Object::plain();
-        let mut this = Self { env, output: Vec::new(), global, object_proto, function_proto, array_proto, error_proto };
+        let mut this = Self { env, closures: HashMap::new(), output: Vec::new(), global, object_proto, function_proto, array_proto, error_proto };
         this.install_builtins();
         this
     }
@@ -103,8 +104,13 @@ impl Interpreter {
         self.define_native("isNaN");
 
         let json = Object::plain();
+        json.borrow_mut().proto = Some(self.object_proto.clone());
         json.borrow_mut().props.insert("stringify".into(), self.native_method("JSON.stringify"));
         self.define_global("JSON", Value::Object(json), false);
+
+        self.function_proto.borrow_mut().proto = Some(self.object_proto.clone());
+        self.array_proto.borrow_mut().proto = Some(self.object_proto.clone());
+        self.error_proto.borrow_mut().proto = Some(self.object_proto.clone());
 
         if let Some(Value::Object(object_ctor)) = self.env.borrow().get("Object") {
             object_ctor.borrow_mut().props.insert("prototype".into(), Value::Object(self.object_proto.clone()));
@@ -295,14 +301,22 @@ impl Interpreter {
         result
     }
 
-    fn make_function(&self, params: Vec<String>, body: Vec<Stmt>) -> Value {
+    fn make_function(&mut self, params: Vec<String>, body: Vec<Stmt>) -> Value {
         let obj = Object::with_internal(Internal::Function { params, body });
         obj.borrow_mut().proto = Some(self.function_proto.clone());
         let proto = Object::plain();
         proto.borrow_mut().proto = Some(self.object_proto.clone());
         proto.borrow_mut().props.insert("constructor".into(), Value::Object(obj.clone()));
         obj.borrow_mut().props.insert("prototype".into(), Value::Object(proto));
-        Value::Object(obj)
+        let value = Value::Object(obj.clone());
+        self.remember_closure(&value);
+        value
+    }
+
+    fn remember_closure(&mut self, function: &Value) {
+        if let Value::Object(obj) = function {
+            self.closures.insert(Rc::as_ptr(obj) as usize, self.env.clone());
+        }
     }
 
     fn eval_expr(&mut self, expr: &Expr) -> JsResult<Value> {
@@ -462,6 +476,13 @@ impl Interpreter {
 
     fn set_property(&self, object: &ObjectRef, property: &str, value: Value) {
         if let Internal::Array(items) = &mut object.borrow_mut().internal {
+            if property == "length" {
+                let n = value.to_number();
+                if n.is_finite() && n >= 0.0 && n.fract() == 0.0 {
+                    items.resize(n as usize, Value::Undefined);
+                }
+                return;
+            }
             if let Ok(i) = property.parse::<usize>() {
                 if i >= items.len() { items.resize(i + 1, Value::Undefined); }
                 items[i] = value;
@@ -511,11 +532,13 @@ impl Interpreter {
         match internal {
             Internal::Native(name) => self.call_native(name, args, this_value, if construct { Some(func) } else { None }),
             Internal::Function { params, body } => {
-                if args.len() != params.len() {
-                    return Err(JsError::runtime(format!("expected {} arguments, got {}", params.len(), args.len())));
-                }
                 let previous = self.env.clone();
-                self.env = Env::child(previous.clone());
+                let closure_env = self
+                    .closures
+                    .get(&(Rc::as_ptr(&func) as usize))
+                    .cloned()
+                    .unwrap_or_else(|| previous.clone());
+                self.env = Env::child(closure_env);
                 let this_obj = if construct {
                     let obj = Object::plain();
                     if let Some(Value::Object(proto)) = func.borrow().props.get("prototype").cloned() {
@@ -526,7 +549,8 @@ impl Interpreter {
                     Value::Object(obj)
                 } else { this_value };
                 self.env.borrow_mut().define("this".into(), this_obj.clone(), true);
-                for (name, value) in params.into_iter().zip(args) {
+                for (index, name) in params.into_iter().enumerate() {
+                    let value = args.get(index).cloned().unwrap_or(Value::Undefined);
                     self.env.borrow_mut().define(name, value, true);
                 }
                 let result = self.eval_statements(&body);
@@ -558,8 +582,20 @@ impl Interpreter {
                 obj.borrow_mut().props.insert("message".into(), args.first().cloned().unwrap_or(Value::String(String::new())));
                 Ok(Value::Object(obj))
             }
-            "Object" => Ok(args.first().cloned().filter(|v| matches!(v, Value::Object(_))).unwrap_or_else(|| Value::Object(Object::plain()))),
-            "Array" => Ok(Value::array(args)),
+            "Object" => {
+                if let Some(value @ Value::Object(_)) = args.first().cloned() {
+                    Ok(value)
+                } else {
+                    let obj = Object::plain();
+                    obj.borrow_mut().proto = Some(self.object_proto.clone());
+                    Ok(Value::Object(obj))
+                }
+            }
+            "Array" => {
+                let obj = Object::with_internal(Internal::Array(args));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
+            }
             "String" => Ok(Value::String(args.first().cloned().unwrap_or(Value::Undefined).to_string())),
             "Number" => Ok(Value::Number(args.first().cloned().unwrap_or(Value::Undefined).to_number())),
             "Boolean" => Ok(Value::Bool(args.first().cloned().unwrap_or(Value::Undefined).is_truthy())),
@@ -580,9 +616,13 @@ impl Interpreter {
                 if let Value::Object(o) = this_value {
                     let items = if let Internal::Array(items) = &o.borrow().internal { items.clone() } else { Vec::new() };
                     let mapped = items.into_iter().map(|v| self.call(callback.clone(), vec![v], Value::Object(self.global.clone()), false)).collect::<JsResult<Vec<_>>>()?;
-                    return Ok(Value::array(mapped));
+                    let obj = Object::with_internal(Internal::Array(mapped));
+                    obj.borrow_mut().proto = Some(self.array_proto.clone());
+                    return Ok(Value::Object(obj));
                 }
-                Ok(Value::array(Vec::new()))
+                let obj = Object::with_internal(Internal::Array(Vec::new()));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
             }
             _ => {
                 if let Some(func) = construct {
@@ -605,10 +645,46 @@ impl Default for Interpreter {
 
 #[cfg(test)]
 mod tests {
-    use crate::Value;
     use crate::run_source;
+    use crate::Value;
+
     #[test]
     fn if_else_works() {
         assert_eq!(run_source("let x=1; if (x) { 2; } else { 3; }").unwrap(), Value::Number(2.0));
+    }
+
+    #[test]
+    fn closure_captures_lexical_environment() {
+        let src = "function make(){ let x=1; return function(){ x=x+1; return x; }; } let f=make(); f()+f();";
+        assert_eq!(run_source(src).unwrap(), Value::Number(5.0));
+    }
+
+    #[test]
+    fn missing_function_args_become_undefined() {
+        assert_eq!(run_source("function f(a,b){ return typeof b; } f(1);").unwrap(), Value::String("undefined".into()));
+    }
+
+    #[test]
+    fn method_call_binds_this() {
+        let src = "let o={x:3, f:function(){return this.x;}}; o.f();";
+        assert_eq!(run_source(src).unwrap(), Value::Number(3.0));
+    }
+
+    #[test]
+    fn new_uses_prototype_methods() {
+        let src = "function C(x){ this.x=x; } C.prototype.get=function(){return this.x;}; let c=new C(7); c.get();";
+        assert_eq!(run_source(src).unwrap(), Value::Number(7.0));
+    }
+
+    #[test]
+    fn array_length_assignment_truncates() {
+        let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn instanceof_walks_prototype_chain() {
+        let src = "function C(){} let c=new C(); c instanceof C;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 }
