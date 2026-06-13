@@ -68,8 +68,6 @@ def parse_meta(src):
 def collect():
     files = []
     for dp, dn, fn in os.walk(TEST_DIR):
-        if os.sep + "intl402" in dp:
-            continue
         for f in fn:
             if not f.endswith(".js"):
                 continue
@@ -160,7 +158,7 @@ def run_one(path):
 def main():
     files = collect()
     total = len(files)
-    print("total tests (non-fixture, excl intl402):", total, flush=True)
+    print("total tests (non-fixture):", total, flush=True)
     counts = {"pass": 0, "fail": 0, "skip": 0}
     lock = threading.Lock()
     done = [0]
