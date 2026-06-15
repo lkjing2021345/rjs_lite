@@ -21,9 +21,10 @@ Currently supported:
 - `throw`, `try`, `catch`, and `finally`
 - Minimal host builtin: `print(value)`
 - Small standard surface: `Object`, `Array`, `String`, `Number`, `Boolean`, `Error` constructors, `isNaN`, `JSON.stringify`, `Object.prototype.toString`, `Array.prototype.map`, and `Array.prototype.join`
+- Interactive REPL with state preservation, multi-line input, and commands
 - CLI execution from inline source or a `.js` file
 - Agent tool mode with structured JSON result output
-- Unit tests for lexer, parser, and interpreter smoke behavior
+- Unit tests for lexer, parser, interpreter, CLI, and REPL behavior
 - A local `run_test262.py` runner scaffold for use with an external test262 checkout
 
 Not yet supported:
@@ -35,6 +36,40 @@ Not yet supported:
 - JIT, bytecode VM, or advanced optimization pipeline
 
 ## Usage
+
+Start interactive REPL:
+
+```bash
+cargo run
+```
+
+Or explicitly:
+
+```bash
+cargo run -- --repl
+```
+
+In the REPL, type JavaScript line by line. Variables persist across lines. Multi-line input is supported — the prompt changes to `...` while braces or parentheses are unbalanced. Use `.exit` or `.quit` to leave, or press Ctrl+D.
+
+```text
+rjs_lite REPL. Type .exit or .quit to exit. Type .help for commands.
+>>> function add(a, b) {
+...   return a + b;
+... }
+>>> add(3, 4);
+7
+>>> .exit
+```
+
+REPL commands:
+
+| Command | Description |
+|---------|-------------|
+| `.exit`, `.quit` | Exit the REPL |
+| `.help` | Show available commands |
+| `.clear` | Clear the screen |
+| `.reset` | Reset interpreter state (clear all variables) |
+| `.vars` | List defined variables with their declaration kind |
 
 Run inline JavaScript:
 

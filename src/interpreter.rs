@@ -232,8 +232,19 @@ impl Interpreter {
         }
     }
 
-    pub fn take_output(self) -> Vec<String> {
-        self.output
+    pub fn take_output(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.output)
+    }
+
+    pub fn list_variables(&self) -> Vec<(String, &'static str)> {
+        let env = self.env.borrow();
+        let mut names: Vec<(String, &'static str)> = env
+            .values
+            .iter()
+            .map(|(k, v)| (k.clone(), if v.mutable { "let" } else { "const" }))
+            .collect();
+        names.sort_by(|a, b| a.0.cmp(&b.0));
+        names
     }
 
     fn eval_statements(&mut self, statements: &[Stmt]) -> JsResult<Flow> {

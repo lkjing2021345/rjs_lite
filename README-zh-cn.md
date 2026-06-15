@@ -30,10 +30,11 @@
 - `throw`、`try`、`catch` 和 `finally`
 - 最小宿主内置函数：`print(value)`
 - 小型标准能力：`Object`、`Array`、`String`、`Number`、`Boolean`、`Error` 构造函数、`isNaN`、`JSON.stringify`、`Object.prototype.toString`、`Array.prototype.map` 和 `Array.prototype.join`
+- 交互式 REPL，支持多行输入、状态保留和内置命令
 - CLI 执行内联源码或 `.js` 文件
 - `--agent-eval` Agent 工具模式，输出结构化 JSON 结果
 - `AgentRuntime`、`ExecutionContext`、`RuntimeLimits` 和 `run_agent_tool` Rust API
-- lexer、parser、interpreter 和 CLI 的基础测试
+- lexer、parser、interpreter、CLI 和 REPL 的基础测试
 - 可配合外部 test262 checkout 使用的本地 `run_test262.py` runner 脚手架
 
 暂不支持：
@@ -45,6 +46,40 @@
 - JIT、字节码虚拟机和高级优化流水线
 
 ## 快速开始
+
+启动交互式 REPL：
+
+```bash
+cargo run
+```
+
+或显式指定：
+
+```bash
+cargo run -- --repl
+```
+
+在 REPL 中逐行输入 JavaScript 代码，变量跨行保持可用。支持多行输入——当花括号或圆括号未闭合时，提示符变为 `...`。输入 `.exit` 或 `.quit` 退出，也可按 Ctrl+D。
+
+```text
+rjs_lite REPL. Type .exit or .quit to exit. Type .help for commands.
+>>> function add(a, b) {
+...   return a + b;
+... }
+>>> add(3, 4);
+7
+>>> .exit
+```
+
+REPL 命令：
+
+| 命令 | 说明 |
+|------|------|
+| `.exit`, `.quit` | 退出 REPL |
+| `.help` | 显示可用命令 |
+| `.clear` | 清屏 |
+| `.reset` | 重置解释器状态（清除所有变量） |
+| `.vars` | 列出已定义变量及其声明类型 |
 
 执行内联 JS：
 
