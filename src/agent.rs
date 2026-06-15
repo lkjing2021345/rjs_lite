@@ -1,10 +1,11 @@
-use crate::{JsError, Value, run_source_with_output_and_step_limit};
+use crate::{JsError, Value, run_source_with_output_and_limits};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeLimits {
     pub max_source_bytes: usize,
     pub max_output_lines: usize,
     pub max_execution_steps: usize,
+    pub max_call_depth: usize,
 }
 
 impl Default for RuntimeLimits {
@@ -13,6 +14,7 @@ impl Default for RuntimeLimits {
             max_source_bytes: 64 * 1024,
             max_output_lines: 256,
             max_execution_steps: 100_000,
+            max_call_depth: 16,
         }
     }
 }
@@ -66,8 +68,11 @@ impl AgentRuntime {
             );
         }
 
-        match run_source_with_output_and_step_limit(source, self.context.limits.max_execution_steps)
-        {
+        match run_source_with_output_and_limits(
+            source,
+            self.context.limits.max_execution_steps,
+            self.context.limits.max_call_depth,
+        ) {
             Ok((value, mut output)) => {
                 let output_truncated = output.len() > self.context.limits.max_output_lines;
                 output.truncate(self.context.limits.max_output_lines);
@@ -212,6 +217,7 @@ mod tests {
                 max_source_bytes: 3,
                 max_output_lines: 1,
                 max_execution_steps: 100,
+                max_call_depth: 8,
             },
             ..ExecutionContext::default()
         });
@@ -228,6 +234,7 @@ mod tests {
                 max_source_bytes: 64 * 1024,
                 max_output_lines: 256,
                 max_execution_steps: 10,
+                max_call_depth: 16,
             },
             ..ExecutionContext::default()
         });
@@ -242,5 +249,24 @@ mod tests {
                 .unwrap()
                 .contains("execution step limit exceeded")
         );
+    }
+
+    #[test]
+    fn agent_runtime_applies_call_depth_limit() {
+        let runtime = AgentRuntime::new(ExecutionContext {
+            limits: RuntimeLimits {
+                max_source_bytes: 64 * 1024,
+                max_output_lines: 256,
+                max_execution_steps: 100_000,
+                max_call_depth: 4,
+            },
+            ..ExecutionContext::default()
+        });
+
+        let result = runtime.run("function loop() { return loop(); } loop();");
+
+        assert!(!result.ok);
+        assert!(result.output.is_empty());
+        assert!(result.error.unwrap().contains("call depth limit exceeded"));
     }
 }

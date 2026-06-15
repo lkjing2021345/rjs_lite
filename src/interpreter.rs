@@ -82,18 +82,28 @@ pub struct Interpreter {
     error_proto: ObjectRef,
     step_limit: Option<usize>,
     steps: usize,
+    max_call_depth: Option<usize>,
+    call_depth: usize,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
-        Self::new_with_step_limit(None)
+        Self::new_with_limits(None, None)
     }
 
     pub fn with_step_limit(step_limit: usize) -> Self {
-        Self::new_with_step_limit(Some(step_limit))
+        Self::new_with_limits(Some(step_limit), None)
     }
 
-    fn new_with_step_limit(step_limit: Option<usize>) -> Self {
+    pub fn with_call_depth_limit(max_call_depth: usize) -> Self {
+        Self::new_with_limits(None, Some(max_call_depth))
+    }
+
+    pub fn with_limits(step_limit: usize, max_call_depth: usize) -> Self {
+        Self::new_with_limits(Some(step_limit), Some(max_call_depth))
+    }
+
+    fn new_with_limits(step_limit: Option<usize>, max_call_depth: Option<usize>) -> Self {
         let env = Env::new();
         let global = Object::plain();
         let object_proto = Object::plain();
@@ -111,6 +121,8 @@ impl Interpreter {
             error_proto,
             step_limit,
             steps: 0,
+            max_call_depth,
+            call_depth: 0,
         };
         this.install_builtins();
         this
@@ -751,6 +763,7 @@ impl Interpreter {
                 if construct { Some(func) } else { None },
             ),
             Internal::Function { params, body } => {
+                self.enter_call()?;
                 let previous = self.env.clone();
                 let closure_env = self
                     .closures
@@ -780,6 +793,7 @@ impl Interpreter {
                 }
                 let result = self.eval_statements(&body);
                 self.env = previous;
+                self.leave_call();
                 match result? {
                     Flow::Value(v) | Flow::Return(v) => {
                         if construct {
@@ -953,6 +967,22 @@ impl Interpreter {
             return Err(JsError::runtime("execution step limit exceeded"));
         }
         Ok(())
+    }
+
+    fn enter_call(&mut self) -> JsResult<()> {
+        self.call_depth = self.call_depth.saturating_add(1);
+        if self
+            .max_call_depth
+            .is_some_and(|limit| self.call_depth > limit)
+        {
+            self.leave_call();
+            return Err(JsError::runtime("call depth limit exceeded"));
+        }
+        Ok(())
+    }
+
+    fn leave_call(&mut self) {
+        self.call_depth = self.call_depth.saturating_sub(1);
     }
 }
 

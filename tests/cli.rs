@@ -60,3 +60,16 @@ fn agent_eval_wraps_step_limit_error_in_result() {
     assert!(stdout.contains("\"ok\":false"));
     assert!(stdout.contains("execution step limit exceeded"));
 }
+
+#[test]
+fn agent_eval_wraps_call_depth_error_in_result() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["--agent-eval", "function loop() { return loop(); } loop();"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"ok\":false"));
+    assert!(stdout.contains("call depth limit exceeded"));
+}
