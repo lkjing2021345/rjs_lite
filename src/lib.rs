@@ -20,9 +20,25 @@ pub fn run_source(source: &str) -> JsResult<Value> {
 }
 
 pub fn run_source_with_output(source: &str) -> JsResult<(Value, Vec<String>)> {
+    run_source_with_output_inner(source, interpreter::Interpreter::new())
+}
+
+pub fn run_source_with_output_and_step_limit(
+    source: &str,
+    max_execution_steps: usize,
+) -> JsResult<(Value, Vec<String>)> {
+    run_source_with_output_inner(
+        source,
+        interpreter::Interpreter::with_step_limit(max_execution_steps),
+    )
+}
+
+fn run_source_with_output_inner(
+    source: &str,
+    mut interpreter: interpreter::Interpreter,
+) -> JsResult<(Value, Vec<String>)> {
     let tokens = lexer::lex(source)?;
     let program = parser::parse(tokens)?;
-    let mut interpreter = interpreter::Interpreter::new();
     let value = interpreter.run(&program)?;
     Ok((value, interpreter.take_output()))
 }
@@ -50,5 +66,21 @@ mod tests {
             total;
         "#;
         assert_eq!(run_source(source).unwrap(), Value::Number(10.0));
+    }
+
+    #[test]
+    fn step_limited_execution_allows_finite_loops() {
+        let source = "let x = 0; while (x < 3) { x = x + 1; } x;";
+        let (value, output) = run_source_with_output_and_step_limit(source, 100).unwrap();
+
+        assert_eq!(value, Value::Number(3.0));
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn step_limited_execution_stops_infinite_loops() {
+        let error = run_source_with_output_and_step_limit("while (true) {}", 10).unwrap_err();
+
+        assert!(error.to_string().contains("execution step limit exceeded"));
     }
 }

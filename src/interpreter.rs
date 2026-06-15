@@ -80,10 +80,20 @@ pub struct Interpreter {
     function_proto: ObjectRef,
     array_proto: ObjectRef,
     error_proto: ObjectRef,
+    step_limit: Option<usize>,
+    steps: usize,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
+        Self::new_with_step_limit(None)
+    }
+
+    pub fn with_step_limit(step_limit: usize) -> Self {
+        Self::new_with_step_limit(Some(step_limit))
+    }
+
+    fn new_with_step_limit(step_limit: Option<usize>) -> Self {
         let env = Env::new();
         let global = Object::plain();
         let object_proto = Object::plain();
@@ -99,6 +109,8 @@ impl Interpreter {
             function_proto,
             array_proto,
             error_proto,
+            step_limit,
+            steps: 0,
         };
         this.install_builtins();
         this
@@ -222,6 +234,7 @@ impl Interpreter {
     }
 
     fn eval_stmt(&mut self, stmt: &Stmt) -> JsResult<Flow> {
+        self.step()?;
         match stmt {
             Stmt::VarDecl {
                 name,
@@ -419,6 +432,7 @@ impl Interpreter {
     }
 
     fn eval_expr(&mut self, expr: &Expr) -> JsResult<Value> {
+        self.step()?;
         match expr {
             Expr::Number(n) => Ok(Value::Number(*n)),
             Expr::String(s) => Ok(Value::String(s.clone())),
@@ -931,6 +945,14 @@ impl Interpreter {
                 }
             }
         }
+    }
+
+    fn step(&mut self) -> JsResult<()> {
+        self.steps = self.steps.saturating_add(1);
+        if self.step_limit.is_some_and(|limit| self.steps > limit) {
+            return Err(JsError::runtime("execution step limit exceeded"));
+        }
+        Ok(())
     }
 }
 

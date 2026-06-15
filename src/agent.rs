@@ -1,9 +1,10 @@
-use crate::{JsError, Value, run_source_with_output};
+use crate::{JsError, Value, run_source_with_output_and_step_limit};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeLimits {
     pub max_source_bytes: usize,
     pub max_output_lines: usize,
+    pub max_execution_steps: usize,
 }
 
 impl Default for RuntimeLimits {
@@ -11,6 +12,7 @@ impl Default for RuntimeLimits {
         Self {
             max_source_bytes: 64 * 1024,
             max_output_lines: 256,
+            max_execution_steps: 100_000,
         }
     }
 }
@@ -64,7 +66,8 @@ impl AgentRuntime {
             );
         }
 
-        match run_source_with_output(source) {
+        match run_source_with_output_and_step_limit(source, self.context.limits.max_execution_steps)
+        {
             Ok((value, mut output)) => {
                 let output_truncated = output.len() > self.context.limits.max_output_lines;
                 output.truncate(self.context.limits.max_output_lines);
@@ -208,6 +211,7 @@ mod tests {
             limits: RuntimeLimits {
                 max_source_bytes: 3,
                 max_output_lines: 1,
+                max_execution_steps: 100,
             },
             ..ExecutionContext::default()
         });
@@ -215,5 +219,28 @@ mod tests {
         let result = runtime.run("print(1);");
         assert!(!result.ok);
         assert!(result.error.unwrap().contains("limit"));
+    }
+
+    #[test]
+    fn agent_runtime_applies_execution_step_limit() {
+        let runtime = AgentRuntime::new(ExecutionContext {
+            limits: RuntimeLimits {
+                max_source_bytes: 64 * 1024,
+                max_output_lines: 256,
+                max_execution_steps: 10,
+            },
+            ..ExecutionContext::default()
+        });
+
+        let result = runtime.run("while (true) {}");
+
+        assert!(!result.ok);
+        assert!(result.output.is_empty());
+        assert!(
+            result
+                .error
+                .unwrap()
+                .contains("execution step limit exceeded")
+        );
     }
 }
