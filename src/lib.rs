@@ -129,4 +129,36 @@ mod tests {
 
         assert!(error.to_string().contains("call depth limit exceeded"));
     }
+
+    #[test]
+    fn evaluates_typeof_operator() {
+        assert_eq!(
+            run_source("typeof 1;").unwrap(),
+            Value::String("number".to_string())
+        );
+        assert_eq!(
+            run_source("typeof 'x';").unwrap(),
+            Value::String("string".to_string())
+        );
+        assert_eq!(
+            run_source("typeof true;").unwrap(),
+            Value::String("boolean".to_string())
+        );
+        assert_eq!(
+            run_source("typeof null;").unwrap(),
+            Value::String("object".to_string())
+        );
+        assert_eq!(
+            run_source("typeof undefined;").unwrap(),
+            Value::String("undefined".to_string())
+        );
+        assert_eq!(
+            run_source("function f() {} typeof f;").unwrap(),
+            Value::String("function".to_string())
+        );
+        assert_eq!(
+            run_source("typeof missing;").unwrap(),
+            Value::String("undefined".to_string())
+        );
+    }
 }

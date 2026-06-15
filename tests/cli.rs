@@ -50,6 +50,20 @@ fn agent_eval_wraps_parse_error_in_result() {
 }
 
 #[test]
+fn agent_eval_emits_typeof_result() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["--agent-eval", "typeof 42;"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"ok\":true"));
+    assert!(stdout.contains("\"value\":\"number\""));
+    assert!(stdout.contains("\"value_type\":\"string\""));
+}
+
+#[test]
 fn agent_eval_wraps_step_limit_error_in_result() {
     let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
         .args(["--agent-eval", "while (true) {}"])
