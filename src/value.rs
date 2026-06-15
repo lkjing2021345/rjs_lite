@@ -163,7 +163,9 @@ impl fmt::Display for Value {
             Value::Object(o) => {
                 let obj = o.borrow();
                 match &obj.internal {
-                    Internal::Function { .. } | Internal::Native(_) => write!(f, "function () {{ [native code] }}"),
+                    Internal::Function { .. } | Internal::Native(_) => {
+                        write!(f, "function () {{ [native code] }}")
+                    }
                     Internal::Array(items) => {
                         let parts: Vec<String> = items
                             .iter()

@@ -23,21 +23,25 @@
 - `let` 和 `const` 变量声明
 - 对可变绑定进行赋值
 - 算术、比较、相等、逻辑和一元运算符
-- 代码块、`if`、`else`、`while`
-- 函数声明、函数调用和 `return`
+- 代码块、`if`、`else`、`while`、`for`、`switch` 和 `break`
+- 函数声明、函数表达式、函数调用、闭包和 `return`
+- 对象与数组字面量、成员/下标访问、属性赋值和数组 `length`
+- `this` 绑定、`new`、构造函数原型和 `instanceof`
+- `throw`、`try`、`catch` 和 `finally`
 - 最小宿主内置函数：`print(value)`
+- 小型标准能力：`Object`、`Array`、`String`、`Number`、`Boolean`、`Error` 构造函数、`isNaN`、`JSON.stringify`、`Object.prototype.toString`、`Array.prototype.map` 和 `Array.prototype.join`
 - CLI 执行内联源码或 `.js` 文件
 - `--agent-eval` Agent 工具模式，输出结构化 JSON 结果
 - `AgentRuntime`、`ExecutionContext`、`RuntimeLimits` 和 `run_agent_tool` Rust API
 - lexer、parser、interpreter 和 CLI 的基础测试
+- 可配合外部 test262 checkout 使用的本地 `run_test262.py` runner 脚手架
 
 暂不支持：
 
-- 对象和数组完整语义
-- 原型链和 ECMAScript 标准库对象
+- 完整对象、数组、原型链和标准库语义
 - class、module、async、generator、promise、regexp、symbol、BigInt
 - 完整 JS 类型隐式转换规则
-- test262 自动化测试框架
+- 随仓库捆绑 test262 checkout 或公开 test262 通过率追踪
 - JIT、字节码虚拟机和高级优化流水线
 
 ## 快速开始
@@ -146,7 +150,7 @@ Agent 工具层同样不调用外部 JS 引擎。`--agent-eval` 只是把本项�
 
 1. 扩展对象、数组、属性访问和原型链。
 2. 补齐常用标准库对象和函数。
-3. 接入 test262 runner，记录测试通过率和失败分类。
+3. 使用现有 `run_test262.py` 脚手架配合本地 `test262/` checkout，记录测试通过率和失败分类。
 4. 优先覆盖 AI agent 场景中高频使用的 JS 子集。
 5. 扩展 HostFunction 注册机制，让 Agent 能显式挂载安全可控的宿主能力。
 

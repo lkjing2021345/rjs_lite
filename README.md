@@ -14,20 +14,24 @@ Currently supported:
 - `let` and `const` bindings
 - Assignment to mutable bindings
 - Arithmetic, comparison, equality, logical, and unary operators
-- Blocks, `if`, `else`, and `while`
-- Function declarations, calls, and `return`
+- Blocks, `if`, `else`, `while`, `for`, `switch`, and `break`
+- Function declarations, function expressions, calls, closures, and `return`
+- Object and array literals, member/index access, assignment, and array `length`
+- `this` binding, `new`, constructor prototypes, and `instanceof`
+- `throw`, `try`, `catch`, and `finally`
 - Minimal host builtin: `print(value)`
+- Small standard surface: `Object`, `Array`, `String`, `Number`, `Boolean`, `Error` constructors, `isNaN`, `JSON.stringify`, `Object.prototype.toString`, `Array.prototype.map`, and `Array.prototype.join`
 - CLI execution from inline source or a `.js` file
 - Agent tool mode with structured JSON result output
 - Unit tests for lexer, parser, and interpreter smoke behavior
+- A local `run_test262.py` runner scaffold for use with an external test262 checkout
 
 Not yet supported:
 
-- Object and array semantics
-- Prototype chain and standard library objects
+- Full object, array, prototype, and standard-library semantics
 - Classes, modules, async, generators, promises, regexps, symbols, BigInt
 - Full ECMAScript type coercion rules
-- test262 harness integration
+- Bundled test262 checkout or published test262 pass-rate tracking
 - JIT, bytecode VM, or advanced optimization pipeline
 
 ## Usage
@@ -113,7 +117,7 @@ See `docs/agent-tool.md` for the full tool contract.
 Function completeness path:
 
 1. Grow language surface from expressions/functions into objects, arrays, and standard builtins.
-2. Add a test262 runner that can filter supported features, record pass rate, and track regressions.
+2. Use the existing `run_test262.py` scaffold with a local `test262/` checkout, then publish pass-rate tracking and failure categories.
 3. Prioritize high-frequency syntax and APIs used by agent-generated scripts.
 
 Performance benchmark path:

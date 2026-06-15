@@ -19,11 +19,17 @@ struct Env {
 
 impl Env {
     fn new() -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self { values: HashMap::new(), parent: None }))
+        Rc::new(RefCell::new(Self {
+            values: HashMap::new(),
+            parent: None,
+        }))
     }
 
     fn child(parent: Rc<RefCell<Env>>) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self { values: HashMap::new(), parent: Some(parent) }))
+        Rc::new(RefCell::new(Self {
+            values: HashMap::new(),
+            parent: Some(parent),
+        }))
     }
 
     fn define(&mut self, name: String, value: Value, mutable: bool) {
@@ -84,7 +90,16 @@ impl Interpreter {
         let function_proto = Object::plain();
         let array_proto = Object::plain();
         let error_proto = Object::plain();
-        let mut this = Self { env, closures: HashMap::new(), output: Vec::new(), global, object_proto, function_proto, array_proto, error_proto };
+        let mut this = Self {
+            env,
+            closures: HashMap::new(),
+            output: Vec::new(),
+            global,
+            object_proto,
+            function_proto,
+            array_proto,
+            error_proto,
+        };
         this.install_builtins();
         this
     }
@@ -105,7 +120,9 @@ impl Interpreter {
 
         let json = Object::plain();
         json.borrow_mut().proto = Some(self.object_proto.clone());
-        json.borrow_mut().props.insert("stringify".into(), self.native_method("JSON.stringify"));
+        json.borrow_mut()
+            .props
+            .insert("stringify".into(), self.native_method("JSON.stringify"));
         self.define_global("JSON", Value::Object(json), false);
 
         self.function_proto.borrow_mut().proto = Some(self.object_proto.clone());
@@ -113,20 +130,46 @@ impl Interpreter {
         self.error_proto.borrow_mut().proto = Some(self.object_proto.clone());
 
         if let Some(Value::Object(object_ctor)) = self.env.borrow().get("Object") {
-            object_ctor.borrow_mut().props.insert("prototype".into(), Value::Object(self.object_proto.clone()));
-            self.object_proto.borrow_mut().props.insert("toString".into(), self.native_method("Object.prototype.toString"));
+            object_ctor
+                .borrow_mut()
+                .props
+                .insert("prototype".into(), Value::Object(self.object_proto.clone()));
+            self.object_proto.borrow_mut().props.insert(
+                "toString".into(),
+                self.native_method("Object.prototype.toString"),
+            );
         }
         if let Some(Value::Object(array_ctor)) = self.env.borrow().get("Array") {
-            array_ctor.borrow_mut().props.insert("prototype".into(), Value::Object(self.array_proto.clone()));
-            self.array_proto.borrow_mut().props.insert("map".into(), self.native_method("Array.prototype.map"));
-            self.array_proto.borrow_mut().props.insert("join".into(), self.native_method("Array.prototype.join"));
+            array_ctor
+                .borrow_mut()
+                .props
+                .insert("prototype".into(), Value::Object(self.array_proto.clone()));
+            self.array_proto
+                .borrow_mut()
+                .props
+                .insert("map".into(), self.native_method("Array.prototype.map"));
+            self.array_proto
+                .borrow_mut()
+                .props
+                .insert("join".into(), self.native_method("Array.prototype.join"));
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
-            string_ctor.borrow_mut().props.insert("prototype".into(), Value::Object(Object::plain()));
+            string_ctor
+                .borrow_mut()
+                .props
+                .insert("prototype".into(), Value::Object(Object::plain()));
         }
-        for name in ["Error", "TypeError", "SyntaxError", "ReferenceError", "RangeError"] {
+        for name in [
+            "Error",
+            "TypeError",
+            "SyntaxError",
+            "ReferenceError",
+            "RangeError",
+        ] {
             if let Some(Value::Object(ctor)) = self.env.borrow().get(name) {
-                ctor.borrow_mut().props.insert("prototype".into(), Value::Object(self.error_proto.clone()));
+                ctor.borrow_mut()
+                    .props
+                    .insert("prototype".into(), Value::Object(self.error_proto.clone()));
             }
         }
     }
@@ -139,13 +182,20 @@ impl Interpreter {
     fn native_method(&self, name: &'static str) -> Value {
         let obj = Object::with_internal(Internal::Native(name));
         obj.borrow_mut().proto = Some(self.function_proto.clone());
-        obj.borrow_mut().props.insert("prototype".into(), Value::Object(Object::plain()));
+        obj.borrow_mut()
+            .props
+            .insert("prototype".into(), Value::Object(Object::plain()));
         Value::Object(obj)
     }
 
     fn define_global(&mut self, name: &str, value: Value, mutable: bool) {
-        self.env.borrow_mut().define(name.to_string(), value.clone(), mutable);
-        self.global.borrow_mut().props.insert(name.to_string(), value);
+        self.env
+            .borrow_mut()
+            .define(name.to_string(), value.clone(), mutable);
+        self.global
+            .borrow_mut()
+            .props
+            .insert(name.to_string(), value);
     }
 
     pub fn run(&mut self, program: &Program) -> JsResult<Value> {
@@ -156,7 +206,9 @@ impl Interpreter {
         }
     }
 
-    pub fn take_output(self) -> Vec<String> { self.output }
+    pub fn take_output(self) -> Vec<String> {
+        self.output
+    }
 
     fn eval_statements(&mut self, statements: &[Stmt]) -> JsResult<Flow> {
         let mut last = Value::Undefined;
@@ -171,18 +223,29 @@ impl Interpreter {
 
     fn eval_stmt(&mut self, stmt: &Stmt) -> JsResult<Flow> {
         match stmt {
-            Stmt::VarDecl { name, value, mutable } => {
+            Stmt::VarDecl {
+                name,
+                value,
+                mutable,
+            } => {
                 let value = self.eval_expr(value)?;
-                self.env.borrow_mut().define(name.clone(), value.clone(), *mutable);
+                self.env
+                    .borrow_mut()
+                    .define(name.clone(), value.clone(), *mutable);
                 if self.env.borrow().parent.is_none() {
                     self.global.borrow_mut().props.insert(name.clone(), value);
                 }
                 Ok(Flow::Value(Value::Undefined))
             }
-            Stmt::VarDecls { declarations, mutable } => {
+            Stmt::VarDecls {
+                declarations,
+                mutable,
+            } => {
                 for (name, expr) in declarations {
                     let value = self.eval_expr(expr)?;
-                    self.env.borrow_mut().define(name.clone(), value.clone(), *mutable);
+                    self.env
+                        .borrow_mut()
+                        .define(name.clone(), value.clone(), *mutable);
                     if self.env.borrow().parent.is_none() {
                         self.global.borrow_mut().props.insert(name.clone(), value);
                     }
@@ -191,15 +254,28 @@ impl Interpreter {
             }
             Stmt::FunctionDecl { name, params, body } => {
                 let value = self.make_function(params.clone(), body.clone());
-                self.env.borrow_mut().define(name.clone(), value.clone(), false);
+                self.env
+                    .borrow_mut()
+                    .define(name.clone(), value.clone(), false);
                 if self.env.borrow().parent.is_none() {
                     self.global.borrow_mut().props.insert(name.clone(), value);
                 }
                 Ok(Flow::Value(Value::Undefined))
             }
-            Stmt::Return(value) => Ok(Flow::Return(value.as_ref().map(|v| self.eval_expr(v)).transpose()?.unwrap_or(Value::Undefined))),
+            Stmt::Return(value) => Ok(Flow::Return(
+                value
+                    .as_ref()
+                    .map(|v| self.eval_expr(v))
+                    .transpose()?
+                    .unwrap_or(Value::Undefined),
+            )),
             Stmt::Throw(value) => Ok(Flow::Throw(self.eval_expr(value)?)),
-            Stmt::Try { block, catch_param, catch_block, finally_block } => {
+            Stmt::Try {
+                block,
+                catch_param,
+                catch_block,
+                finally_block,
+            } => {
                 let mut result = match self.with_child(block)? {
                     Flow::Throw(v) => {
                         if let (Some(param), Some(catch)) = (catch_param, catch_block) {
@@ -223,8 +299,16 @@ impl Interpreter {
                 }
                 Ok(result)
             }
-            Stmt::If { condition, then_branch, else_branch } => {
-                if self.eval_expr(condition)?.is_truthy() { self.with_child(then_branch) } else { self.with_child(else_branch) }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                if self.eval_expr(condition)?.is_truthy() {
+                    self.with_child(then_branch)
+                } else {
+                    self.with_child(else_branch)
+                }
             }
             Stmt::While { condition, body } => {
                 let mut last = Value::Undefined;
@@ -237,7 +321,12 @@ impl Interpreter {
                 }
                 Ok(Flow::Value(last))
             }
-            Stmt::For { init, condition, update, body } => {
+            Stmt::For {
+                init,
+                condition,
+                update,
+                body,
+            } => {
                 if let Some(init) = init {
                     match self.eval_stmt(init)? {
                         Flow::Value(_) => {}
@@ -246,10 +335,10 @@ impl Interpreter {
                 }
                 let mut last = Value::Undefined;
                 loop {
-                    if let Some(condition) = condition {
-                        if !self.eval_expr(condition)?.is_truthy() {
-                            break;
-                        }
+                    if let Some(condition) = condition
+                        && !self.eval_expr(condition)?.is_truthy()
+                    {
+                        break;
                     }
                     match self.with_child(body)? {
                         Flow::Value(v) => last = v,
@@ -262,7 +351,11 @@ impl Interpreter {
                 }
                 Ok(Flow::Value(last))
             }
-            Stmt::Switch { discriminant, cases, default } => {
+            Stmt::Switch {
+                discriminant,
+                cases,
+                default,
+            } => {
                 let discriminant = self.eval_expr(discriminant)?;
                 let mut matched = false;
                 let mut last = Value::Undefined;
@@ -306,8 +399,13 @@ impl Interpreter {
         obj.borrow_mut().proto = Some(self.function_proto.clone());
         let proto = Object::plain();
         proto.borrow_mut().proto = Some(self.object_proto.clone());
-        proto.borrow_mut().props.insert("constructor".into(), Value::Object(obj.clone()));
-        obj.borrow_mut().props.insert("prototype".into(), Value::Object(proto));
+        proto
+            .borrow_mut()
+            .props
+            .insert("constructor".into(), Value::Object(obj.clone()));
+        obj.borrow_mut()
+            .props
+            .insert("prototype".into(), Value::Object(proto));
         let value = Value::Object(obj.clone());
         self.remember_closure(&value);
         value
@@ -315,7 +413,8 @@ impl Interpreter {
 
     fn remember_closure(&mut self, function: &Value) {
         if let Value::Object(obj) = function {
-            self.closures.insert(Rc::as_ptr(obj) as usize, self.env.clone());
+            self.closures
+                .insert(Rc::as_ptr(obj) as usize, self.env.clone());
         }
     }
 
@@ -326,10 +425,21 @@ impl Interpreter {
             Expr::Bool(v) => Ok(Value::Bool(*v)),
             Expr::Null => Ok(Value::Null),
             Expr::Undefined => Ok(Value::Undefined),
-            Expr::This => Ok(self.env.borrow().get("this").unwrap_or(Value::Object(self.global.clone()))),
-            Expr::Identifier(name) => self.env.borrow().get(name).ok_or_else(|| JsError::runtime(format!("undefined variable `{name}`"))),
+            Expr::This => Ok(self
+                .env
+                .borrow()
+                .get("this")
+                .unwrap_or(Value::Object(self.global.clone()))),
+            Expr::Identifier(name) => self
+                .env
+                .borrow()
+                .get(name)
+                .ok_or_else(|| JsError::runtime(format!("undefined variable `{name}`"))),
             Expr::Array(items) => {
-                let values = items.iter().map(|e| self.eval_expr(e)).collect::<JsResult<Vec<_>>>()?;
+                let values = items
+                    .iter()
+                    .map(|e| self.eval_expr(e))
+                    .collect::<JsResult<Vec<_>>>()?;
                 let obj = Object::with_internal(Internal::Array(values));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
@@ -356,7 +466,11 @@ impl Interpreter {
                 self.assign_target(target, value.clone())?;
                 Ok(value)
             }
-            Expr::Update { target, delta, prefix } => {
+            Expr::Update {
+                target,
+                delta,
+                prefix,
+            } => {
                 let old = self.get_target(target)?;
                 let new_value = Value::Number(old.to_number() + delta);
                 self.assign_target(target, new_value.clone())?;
@@ -370,19 +484,49 @@ impl Interpreter {
                 }
             }
             Expr::Typeof(expr) => match expr.as_ref() {
-                Expr::Identifier(name) => Ok(Value::String(self.env.borrow().get(name).map(|v| v.type_name().to_string()).unwrap_or_else(|| "undefined".into()))),
+                Expr::Identifier(name) => Ok(Value::String(
+                    self.env
+                        .borrow()
+                        .get(name)
+                        .map(|v| v.type_name().to_string())
+                        .unwrap_or_else(|| "undefined".into()),
+                )),
                 _ => Ok(Value::String(self.eval_expr(expr)?.type_name().to_string())),
             },
-            Expr::Conditional { condition, then_expr, else_expr } => {
-                if self.eval_expr(condition)?.is_truthy() { self.eval_expr(then_expr) } else { self.eval_expr(else_expr) }
+            Expr::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                if self.eval_expr(condition)?.is_truthy() {
+                    self.eval_expr(then_expr)
+                } else {
+                    self.eval_expr(else_expr)
+                }
             }
-            Expr::Binary { left, op: BinaryOp::And, right } => {
+            Expr::Binary {
+                left,
+                op: BinaryOp::And,
+                right,
+            } => {
                 let left = self.eval_expr(left)?;
-                if !left.is_truthy() { Ok(left) } else { self.eval_expr(right) }
+                if !left.is_truthy() {
+                    Ok(left)
+                } else {
+                    self.eval_expr(right)
+                }
             }
-            Expr::Binary { left, op: BinaryOp::Or, right } => {
+            Expr::Binary {
+                left,
+                op: BinaryOp::Or,
+                right,
+            } => {
                 let left = self.eval_expr(left)?;
-                if left.is_truthy() { Ok(left) } else { self.eval_expr(right) }
+                if left.is_truthy() {
+                    Ok(left)
+                } else {
+                    self.eval_expr(right)
+                }
             }
             Expr::Binary { left, op, right } => {
                 let l = self.eval_expr(left)?;
@@ -391,12 +535,18 @@ impl Interpreter {
             }
             Expr::Call { callee, args } => {
                 let (callee_value, this_value) = self.eval_callee(callee)?;
-                let args = args.iter().map(|a| self.eval_expr(a)).collect::<JsResult<Vec<_>>>()?;
+                let args = args
+                    .iter()
+                    .map(|a| self.eval_expr(a))
+                    .collect::<JsResult<Vec<_>>>()?;
                 self.call(callee_value, args, this_value, false)
             }
             Expr::New { callee, args } => {
                 let callee = self.eval_expr(callee)?;
-                let args = args.iter().map(|a| self.eval_expr(a)).collect::<JsResult<Vec<_>>>()?;
+                let args = args
+                    .iter()
+                    .map(|a| self.eval_expr(a))
+                    .collect::<JsResult<Vec<_>>>()?;
                 self.call(callee, args, Value::Undefined, true)
             }
             Expr::Member { .. } | Expr::Index { .. } => self.get_target(expr),
@@ -408,7 +558,10 @@ impl Interpreter {
             Expr::Member { object, property } => {
                 let object_value = self.eval_expr(object)?;
                 if let Value::Object(o) = object_value.clone() {
-                    Ok((Object::lookup(&o, property).unwrap_or(Value::Undefined), object_value))
+                    Ok((
+                        Object::lookup(&o, property).unwrap_or(Value::Undefined),
+                        object_value,
+                    ))
                 } else {
                     Ok((Value::Undefined, object_value))
                 }
@@ -417,7 +570,10 @@ impl Interpreter {
                 let object_value = self.eval_expr(object)?;
                 let key = self.eval_expr(index)?.to_string();
                 if let Value::Object(o) = object_value.clone() {
-                    Ok((Object::lookup(&o, &key).unwrap_or(Value::Undefined), object_value))
+                    Ok((
+                        Object::lookup(&o, &key).unwrap_or(Value::Undefined),
+                        object_value,
+                    ))
                 } else {
                     Ok((Value::Undefined, object_value))
                 }
@@ -430,12 +586,26 @@ impl Interpreter {
         match target {
             Expr::Member { object, property } => {
                 let object = self.eval_expr(object)?;
-                if let Value::Object(o) = object { Ok(RefTarget { object: o, property: property.clone() }) } else { Err(JsError::runtime("member access on non-object")) }
+                if let Value::Object(o) = object {
+                    Ok(RefTarget {
+                        object: o,
+                        property: property.clone(),
+                    })
+                } else {
+                    Err(JsError::runtime("member access on non-object"))
+                }
             }
             Expr::Index { object, index } => {
                 let object = self.eval_expr(object)?;
                 let property = self.eval_expr(index)?.to_string();
-                if let Value::Object(o) = object { Ok(RefTarget { object: o, property }) } else { Err(JsError::runtime("index access on non-object")) }
+                if let Value::Object(o) = object {
+                    Ok(RefTarget {
+                        object: o,
+                        property,
+                    })
+                } else {
+                    Err(JsError::runtime("index access on non-object"))
+                }
             }
             _ => Err(JsError::runtime("target is not a reference")),
         }
@@ -443,7 +613,11 @@ impl Interpreter {
 
     fn get_target(&mut self, target: &Expr) -> JsResult<Value> {
         match target {
-            Expr::Identifier(name) => self.env.borrow().get(name).ok_or_else(|| JsError::runtime(format!("undefined variable `{name}`"))),
+            Expr::Identifier(name) => self
+                .env
+                .borrow()
+                .get(name)
+                .ok_or_else(|| JsError::runtime(format!("undefined variable `{name}`"))),
             Expr::Member { .. } | Expr::Index { .. } => {
                 let r = self.get_ref(target)?;
                 Ok(self.get_property(&r.object, &r.property))
@@ -466,7 +640,9 @@ impl Interpreter {
 
     fn get_property(&self, object: &ObjectRef, property: &str) -> Value {
         if let Internal::Array(items) = &object.borrow().internal {
-            if property == "length" { return Value::Number(items.len() as f64); }
+            if property == "length" {
+                return Value::Number(items.len() as f64);
+            }
             if let Ok(i) = property.parse::<usize>() {
                 return items.get(i).cloned().unwrap_or(Value::Undefined);
             }
@@ -484,12 +660,17 @@ impl Interpreter {
                 return;
             }
             if let Ok(i) = property.parse::<usize>() {
-                if i >= items.len() { items.resize(i + 1, Value::Undefined); }
+                if i >= items.len() {
+                    items.resize(i + 1, Value::Undefined);
+                }
                 items[i] = value;
                 return;
             }
         }
-        object.borrow_mut().props.insert(property.to_string(), value);
+        object
+            .borrow_mut()
+            .props
+            .insert(property.to_string(), value);
     }
 
     fn binary(&self, left: Value, op: BinaryOp, right: Value) -> JsResult<Value> {
@@ -515,22 +696,46 @@ impl Interpreter {
     }
 
     fn instanceof(&self, left: Value, right: Value) -> bool {
-        let Value::Object(obj) = left else { return false; };
-        let Value::Object(ctor) = right else { return false; };
-        let Some(Value::Object(proto)) = ctor.borrow().props.get("prototype").cloned() else { return false; };
+        let Value::Object(obj) = left else {
+            return false;
+        };
+        let Value::Object(ctor) = right else {
+            return false;
+        };
+        let Some(Value::Object(proto)) = ctor.borrow().props.get("prototype").cloned() else {
+            return false;
+        };
         let mut current = obj.borrow().proto.clone();
         while let Some(p) = current {
-            if Rc::ptr_eq(&p, &proto) { return true; }
+            if Rc::ptr_eq(&p, &proto) {
+                return true;
+            }
             current = p.borrow().proto.clone();
         }
         false
     }
 
-    fn call(&mut self, callee: Value, args: Vec<Value>, this_value: Value, construct: bool) -> JsResult<Value> {
-        let Value::Object(func) = callee else { return Err(JsError::runtime(format!("{} is not callable", callee.type_name()))); };
+    fn call(
+        &mut self,
+        callee: Value,
+        args: Vec<Value>,
+        this_value: Value,
+        construct: bool,
+    ) -> JsResult<Value> {
+        let Value::Object(func) = callee else {
+            return Err(JsError::runtime(format!(
+                "{} is not callable",
+                callee.type_name()
+            )));
+        };
         let internal = func.borrow().internal.clone();
         match internal {
-            Internal::Native(name) => self.call_native(name, args, this_value, if construct { Some(func) } else { None }),
+            Internal::Native(name) => self.call_native(
+                name,
+                args,
+                this_value,
+                if construct { Some(func) } else { None },
+            ),
             Internal::Function { params, body } => {
                 let previous = self.env.clone();
                 let closure_env = self
@@ -541,14 +746,20 @@ impl Interpreter {
                 self.env = Env::child(closure_env);
                 let this_obj = if construct {
                     let obj = Object::plain();
-                    if let Some(Value::Object(proto)) = func.borrow().props.get("prototype").cloned() {
+                    if let Some(Value::Object(proto)) =
+                        func.borrow().props.get("prototype").cloned()
+                    {
                         obj.borrow_mut().proto = Some(proto);
                     } else {
                         obj.borrow_mut().proto = Some(self.object_proto.clone());
                     }
                     Value::Object(obj)
-                } else { this_value };
-                self.env.borrow_mut().define("this".into(), this_obj.clone(), true);
+                } else {
+                    this_value
+                };
+                self.env
+                    .borrow_mut()
+                    .define("this".into(), this_obj.clone(), true);
                 for (index, name) in params.into_iter().enumerate() {
                     let value = args.get(index).cloned().unwrap_or(Value::Undefined);
                     self.env.borrow_mut().define(name, value, true);
@@ -558,8 +769,14 @@ impl Interpreter {
                 match result? {
                     Flow::Value(v) | Flow::Return(v) => {
                         if construct {
-                            if matches!(v, Value::Object(_)) { Ok(v) } else { Ok(this_obj) }
-                        } else { Ok(v) }
+                            if matches!(v, Value::Object(_)) {
+                                Ok(v)
+                            } else {
+                                Ok(this_obj)
+                            }
+                        } else {
+                            Ok(v)
+                        }
                     }
                     Flow::Throw(v) => Ok(v).and_then(|v| Err(JsError::runtime(v.to_string()))),
                     Flow::Break => Err(JsError::runtime("break outside loop")),
@@ -569,17 +786,35 @@ impl Interpreter {
         }
     }
 
-    fn call_native(&mut self, name: &'static str, args: Vec<Value>, this_value: Value, construct: Option<ObjectRef>) -> JsResult<Value> {
+    fn call_native(
+        &mut self,
+        name: &'static str,
+        args: Vec<Value>,
+        this_value: Value,
+        construct: Option<ObjectRef>,
+    ) -> JsResult<Value> {
         match name {
             "print" => {
-                self.output.push(args.first().cloned().unwrap_or(Value::Undefined).to_string());
+                self.output.push(
+                    args.first()
+                        .cloned()
+                        .unwrap_or(Value::Undefined)
+                        .to_string(),
+                );
                 Ok(Value::Undefined)
             }
             "Error" | "TypeError" | "SyntaxError" | "ReferenceError" | "RangeError" => {
                 let obj = Object::plain();
                 obj.borrow_mut().proto = Some(self.error_proto.clone());
-                obj.borrow_mut().props.insert("name".into(), Value::String(name.into()));
-                obj.borrow_mut().props.insert("message".into(), args.first().cloned().unwrap_or(Value::String(String::new())));
+                obj.borrow_mut()
+                    .props
+                    .insert("name".into(), Value::String(name.into()));
+                obj.borrow_mut().props.insert(
+                    "message".into(),
+                    args.first()
+                        .cloned()
+                        .unwrap_or(Value::String(String::new())),
+                );
                 Ok(Value::Object(obj))
             }
             "Object" => {
@@ -596,26 +831,84 @@ impl Interpreter {
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
-            "String" => Ok(Value::String(args.first().cloned().unwrap_or(Value::Undefined).to_string())),
-            "Number" => Ok(Value::Number(args.first().cloned().unwrap_or(Value::Undefined).to_number())),
-            "Boolean" => Ok(Value::Bool(args.first().cloned().unwrap_or(Value::Undefined).is_truthy())),
-            "isNaN" => Ok(Value::Bool(args.first().cloned().unwrap_or(Value::Undefined).to_number().is_nan())),
-            "JSON.stringify" => Ok(Value::String(args.first().cloned().unwrap_or(Value::Undefined).to_string())),
-            "Object.prototype.toString" => Ok(Value::String(format!("[object {}]", match this_value.type_name() { "undefined" => "Undefined", "boolean" => "Boolean", "number" => "Number", "string" => "String", _ => "Object" }))),
+            "String" => Ok(Value::String(
+                args.first()
+                    .cloned()
+                    .unwrap_or(Value::Undefined)
+                    .to_string(),
+            )),
+            "Number" => Ok(Value::Number(
+                args.first()
+                    .cloned()
+                    .unwrap_or(Value::Undefined)
+                    .to_number(),
+            )),
+            "Boolean" => Ok(Value::Bool(
+                args.first()
+                    .cloned()
+                    .unwrap_or(Value::Undefined)
+                    .is_truthy(),
+            )),
+            "isNaN" => Ok(Value::Bool(
+                args.first()
+                    .cloned()
+                    .unwrap_or(Value::Undefined)
+                    .to_number()
+                    .is_nan(),
+            )),
+            "JSON.stringify" => Ok(Value::String(
+                args.first()
+                    .cloned()
+                    .unwrap_or(Value::Undefined)
+                    .to_string(),
+            )),
+            "Object.prototype.toString" => Ok(Value::String(format!(
+                "[object {}]",
+                match this_value.type_name() {
+                    "undefined" => "Undefined",
+                    "boolean" => "Boolean",
+                    "number" => "Number",
+                    "string" => "String",
+                    _ => "Object",
+                }
+            ))),
             "Array.prototype.join" => {
-                let sep = args.first().map(|v| v.to_string()).unwrap_or_else(|| ",".into());
-                if let Value::Object(o) = this_value {
-                    if let Internal::Array(items) = &o.borrow().internal {
-                        return Ok(Value::String(items.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(&sep)));
-                    }
+                let sep = args
+                    .first()
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| ",".into());
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    return Ok(Value::String(
+                        items
+                            .iter()
+                            .map(|v| v.to_string())
+                            .collect::<Vec<_>>()
+                            .join(&sep),
+                    ));
                 }
                 Ok(Value::String(String::new()))
             }
             "Array.prototype.map" => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
-                    let items = if let Internal::Array(items) = &o.borrow().internal { items.clone() } else { Vec::new() };
-                    let mapped = items.into_iter().map(|v| self.call(callback.clone(), vec![v], Value::Object(self.global.clone()), false)).collect::<JsResult<Vec<_>>>()?;
+                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let mapped = items
+                        .into_iter()
+                        .map(|v| {
+                            self.call(
+                                callback.clone(),
+                                vec![v],
+                                Value::Object(self.global.clone()),
+                                false,
+                            )
+                        })
+                        .collect::<JsResult<Vec<_>>>()?;
                     let obj = Object::with_internal(Internal::Array(mapped));
                     obj.borrow_mut().proto = Some(self.array_proto.clone());
                     return Ok(Value::Object(obj));
@@ -627,7 +920,9 @@ impl Interpreter {
             _ => {
                 if let Some(func) = construct {
                     let obj = Object::plain();
-                    if let Some(Value::Object(proto)) = func.borrow().props.get("prototype").cloned() {
+                    if let Some(Value::Object(proto)) =
+                        func.borrow().props.get("prototype").cloned()
+                    {
                         obj.borrow_mut().proto = Some(proto);
                     }
                     Ok(Value::Object(obj))
@@ -640,17 +935,22 @@ impl Interpreter {
 }
 
 impl Default for Interpreter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::run_source;
     use crate::Value;
+    use crate::run_source;
 
     #[test]
     fn if_else_works() {
-        assert_eq!(run_source("let x=1; if (x) { 2; } else { 3; }").unwrap(), Value::Number(2.0));
+        assert_eq!(
+            run_source("let x=1; if (x) { 2; } else { 3; }").unwrap(),
+            Value::Number(2.0)
+        );
     }
 
     #[test]
@@ -661,7 +961,10 @@ mod tests {
 
     #[test]
     fn missing_function_args_become_undefined() {
-        assert_eq!(run_source("function f(a,b){ return typeof b; } f(1);").unwrap(), Value::String("undefined".into()));
+        assert_eq!(
+            run_source("function f(a,b){ return typeof b; } f(1);").unwrap(),
+            Value::String("undefined".into())
+        );
     }
 
     #[test]
