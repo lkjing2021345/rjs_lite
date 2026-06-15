@@ -23,7 +23,7 @@
 - `let` 和 `const` 变量声明
 - 对可变绑定进行赋值
 - 算术、比较、相等、逻辑和一元运算符
-- 代码块、`if`、`else`、`while`、`for`、`switch` 和 `break`
+- 代码块、`if`、`else`、`while`、`for`、`switch`、`break` 和 `continue`
 - 函数声明、函数表达式、函数调用、闭包和 `return`
 - 对象与数组字面量、成员/下标访问、属性赋值和数组 `length`
 - `this` 绑定、`new`、构造函数原型和 `instanceof`

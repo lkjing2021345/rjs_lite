@@ -44,6 +44,9 @@ impl Parser {
             self.for_stmt()
         } else if self.eat(&TokenKind::Switch) {
             self.switch_stmt()
+        } else if self.eat(&TokenKind::Continue) {
+            self.optional_semicolon();
+            Ok(Stmt::Continue)
         } else if self.eat(&TokenKind::LeftBrace) {
             Ok(Stmt::Block(self.block()?))
         } else {

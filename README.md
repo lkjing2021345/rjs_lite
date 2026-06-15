@@ -14,7 +14,7 @@ Currently supported:
 - `let` and `const` bindings
 - Assignment to mutable bindings
 - Arithmetic, comparison, equality, logical, and unary operators
-- Blocks, `if`, `else`, `while`, `for`, `switch`, and `break`
+- Blocks, `if`, `else`, `while`, `for`, `switch`, `break`, and `continue`
 - Function declarations, function expressions, calls, closures, and `return`
 - Object and array literals, member/index access, assignment, and array `length`
 - `this` binding, `new`, constructor prototypes, and `instanceof`

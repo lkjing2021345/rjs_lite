@@ -64,6 +64,7 @@ enum Flow {
     Return(Value),
     Throw(Value),
     Break,
+    Continue,
 }
 
 struct RefTarget {
@@ -226,7 +227,8 @@ impl Interpreter {
         match self.eval_statements(&program.statements)? {
             Flow::Value(v) | Flow::Return(v) => Ok(v),
             Flow::Throw(v) => Err(JsError::runtime(v.to_string())),
-            Flow::Break => Err(JsError::runtime("break outside loop")),
+            Flow::Break => Err(JsError::runtime("break used outside loop")),
+            Flow::Continue => Err(JsError::runtime("continue used outside loop")),
         }
     }
 
@@ -239,7 +241,9 @@ impl Interpreter {
         for stmt in statements {
             match self.eval_stmt(stmt)? {
                 Flow::Value(v) => last = v,
-                r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Break) => return Ok(r),
+                flow @ (Flow::Return(_) | Flow::Throw(_) | Flow::Break | Flow::Continue) => {
+                    return Ok(flow);
+                }
             }
         }
         Ok(Flow::Value(last))
@@ -341,6 +345,7 @@ impl Interpreter {
                     match self.with_child(body)? {
                         Flow::Value(v) => last = v,
                         Flow::Break => break,
+                        Flow::Continue => continue,
                         r @ (Flow::Return(_) | Flow::Throw(_)) => return Ok(r),
                     }
                 }
@@ -355,7 +360,9 @@ impl Interpreter {
                 if let Some(init) = init {
                     match self.eval_stmt(init)? {
                         Flow::Value(_) => {}
-                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Break) => return Ok(r),
+                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Break | Flow::Continue) => {
+                            return Ok(r);
+                        }
                     }
                 }
                 let mut last = Value::Undefined;
@@ -368,6 +375,7 @@ impl Interpreter {
                     match self.with_child(body)? {
                         Flow::Value(v) => last = v,
                         Flow::Break => break,
+                        Flow::Continue => {}
                         r @ (Flow::Return(_) | Flow::Throw(_)) => return Ok(r),
                     }
                     if let Some(update) = update {
@@ -392,7 +400,9 @@ impl Interpreter {
                         match self.with_child(body)? {
                             Flow::Value(v) => last = v,
                             Flow::Break => return Ok(Flow::Value(last)),
-                            r @ (Flow::Return(_) | Flow::Throw(_)) => return Ok(r),
+                            r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Continue) => {
+                                return Ok(r);
+                            }
                         }
                     }
                 }
@@ -400,13 +410,14 @@ impl Interpreter {
                     match self.with_child(default)? {
                         Flow::Value(v) => last = v,
                         Flow::Break => return Ok(Flow::Value(last)),
-                        r @ (Flow::Return(_) | Flow::Throw(_)) => return Ok(r),
+                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Continue) => return Ok(r),
                     }
                 }
                 Ok(Flow::Value(last))
             }
-            Stmt::Block(stmts) => self.with_child(stmts),
             Stmt::Break => Ok(Flow::Break),
+            Stmt::Continue => Ok(Flow::Continue),
+            Stmt::Block(stmts) => self.with_child(stmts),
             Stmt::Expr(expr) => Ok(Flow::Value(self.eval_expr(expr)?)),
         }
     }
@@ -807,7 +818,8 @@ impl Interpreter {
                         }
                     }
                     Flow::Throw(v) => Ok(v).and_then(|v| Err(JsError::runtime(v.to_string()))),
-                    Flow::Break => Err(JsError::runtime("break outside loop")),
+                    Flow::Break => Err(JsError::runtime("break used outside loop")),
+                    Flow::Continue => Err(JsError::runtime("continue used outside loop")),
                 }
             }
             _ => Err(JsError::runtime("object is not callable")),
@@ -1020,6 +1032,26 @@ mod tests {
     }
 
     #[test]
+    fn break_exits_nearest_loop() {
+        assert_eq!(
+            run_source(
+                r#"
+                    let i = 0;
+                    while (i < 10) {
+                        i = i + 1;
+                        if (i == 4) {
+                            break;
+                        }
+                    }
+                    i;
+                "#
+            )
+            .unwrap(),
+            Value::Number(4.0)
+        );
+    }
+
+    #[test]
     fn method_call_binds_this() {
         let src = "let o={x:3, f:function(){return this.x;}}; o.f();";
         assert_eq!(run_source(src).unwrap(), Value::Number(3.0));
@@ -1041,5 +1073,67 @@ mod tests {
     fn instanceof_walks_prototype_chain() {
         let src = "function C(){} let c=new C(); c instanceof C;";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn continue_skips_to_next_loop_iteration() {
+        assert_eq!(
+            run_source(
+                r#"
+                    let i = 0;
+                    let total = 0;
+                    while (i < 5) {
+                        i = i + 1;
+                        if (i == 3) {
+                            continue;
+                        }
+                        total = total + i;
+                    }
+                    total;
+                "#
+            )
+            .unwrap(),
+            Value::Number(12.0)
+        );
+    }
+
+    #[test]
+    fn break_only_exits_nearest_loop() {
+        assert_eq!(
+            run_source(
+                r#"
+                    let outer = 0;
+                    let hits = 0;
+                    while (outer < 3) {
+                        outer = outer + 1;
+                        let inner = 0;
+                        while (inner < 3) {
+                            inner = inner + 1;
+                            if (inner == 2) {
+                                break;
+                            }
+                            hits = hits + 1;
+                        }
+                    }
+                    hits;
+                "#
+            )
+            .unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn break_outside_loop_is_runtime_error() {
+        let error = run_source("break;").unwrap_err();
+
+        assert!(error.to_string().contains("break used outside loop"));
+    }
+
+    #[test]
+    fn continue_outside_loop_is_runtime_error() {
+        let error = run_source("continue;").unwrap_err();
+
+        assert!(error.to_string().contains("continue used outside loop"));
     }
 }

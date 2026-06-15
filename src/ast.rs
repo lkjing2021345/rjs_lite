@@ -49,6 +49,7 @@ pub enum Stmt {
     },
     Block(Vec<Stmt>),
     Break,
+    Continue,
     Expr(Expr),
 }
 
