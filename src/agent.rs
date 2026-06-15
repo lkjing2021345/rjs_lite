@@ -1,4 +1,4 @@
-use crate::{JsError, Value, run_source_with_output_and_limits};
+use crate::{JsError, Value, run_source_with_output_and_all_limits};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeLimits {
@@ -68,24 +68,21 @@ impl AgentRuntime {
             );
         }
 
-        match run_source_with_output_and_limits(
+        match run_source_with_output_and_all_limits(
             source,
             self.context.limits.max_execution_steps,
             self.context.limits.max_call_depth,
+            self.context.limits.max_output_lines,
         ) {
-            Ok((value, mut output)) => {
-                let output_truncated = output.len() > self.context.limits.max_output_lines;
-                output.truncate(self.context.limits.max_output_lines);
-                AgentToolResult {
-                    ok: true,
-                    request_id: self.context.request_id.clone(),
-                    value_type: Some(value.type_name()),
-                    value: Some(value),
-                    output,
-                    output_truncated,
-                    error: None,
-                }
-            }
+            Ok((value, output, output_truncated)) => AgentToolResult {
+                ok: true,
+                request_id: self.context.request_id.clone(),
+                value_type: Some(value.type_name()),
+                value: Some(value),
+                output,
+                output_truncated,
+                error: None,
+            },
             Err(error) => AgentToolResult::failure(self.context.request_id.clone(), error),
         }
     }
@@ -249,6 +246,25 @@ mod tests {
                 .unwrap()
                 .contains("execution step limit exceeded")
         );
+    }
+
+    #[test]
+    fn agent_runtime_truncates_output_while_running() {
+        let runtime = AgentRuntime::new(ExecutionContext {
+            limits: RuntimeLimits {
+                max_source_bytes: 64 * 1024,
+                max_output_lines: 2,
+                max_execution_steps: 100_000,
+                max_call_depth: 16,
+            },
+            ..ExecutionContext::default()
+        });
+
+        let result = runtime.run("print(1); print(2); print(3);");
+
+        assert!(result.ok);
+        assert_eq!(result.output, vec!["1".to_string(), "2".to_string()]);
+        assert!(result.output_truncated);
     }
 
     #[test]

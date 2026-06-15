@@ -64,6 +64,23 @@ fn agent_eval_emits_typeof_result() {
 }
 
 #[test]
+fn agent_eval_marks_output_truncated() {
+    let source = (0..257)
+        .map(|i| format!("print({i});"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["--agent-eval", &source])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"ok\":true"));
+    assert!(stdout.contains("\"output_truncated\":true"));
+}
+
+#[test]
 fn agent_eval_wraps_step_limit_error_in_result() {
     let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
         .args(["--agent-eval", "while (true) {}"])

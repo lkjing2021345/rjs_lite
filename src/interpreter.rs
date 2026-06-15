@@ -85,26 +85,44 @@ pub struct Interpreter {
     steps: usize,
     max_call_depth: Option<usize>,
     call_depth: usize,
+    output_limit: Option<usize>,
+    output_truncated: bool,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
-        Self::new_with_limits(None, None)
+        Self::new_with_limits(None, None, None)
     }
 
     pub fn with_step_limit(step_limit: usize) -> Self {
-        Self::new_with_limits(Some(step_limit), None)
+        Self::new_with_limits(Some(step_limit), None, None)
     }
 
     pub fn with_call_depth_limit(max_call_depth: usize) -> Self {
-        Self::new_with_limits(None, Some(max_call_depth))
+        Self::new_with_limits(None, Some(max_call_depth), None)
     }
 
     pub fn with_limits(step_limit: usize, max_call_depth: usize) -> Self {
-        Self::new_with_limits(Some(step_limit), Some(max_call_depth))
+        Self::new_with_limits(Some(step_limit), Some(max_call_depth), None)
     }
 
-    fn new_with_limits(step_limit: Option<usize>, max_call_depth: Option<usize>) -> Self {
+    pub fn with_output_limit(output_limit: usize) -> Self {
+        Self::new_with_limits(None, None, Some(output_limit))
+    }
+
+    pub fn with_limits_and_output_limit(
+        step_limit: usize,
+        max_call_depth: usize,
+        output_limit: usize,
+    ) -> Self {
+        Self::new_with_limits(Some(step_limit), Some(max_call_depth), Some(output_limit))
+    }
+
+    fn new_with_limits(
+        step_limit: Option<usize>,
+        max_call_depth: Option<usize>,
+        output_limit: Option<usize>,
+    ) -> Self {
         let env = Env::new();
         let global = Object::plain();
         let object_proto = Object::plain();
@@ -124,6 +142,8 @@ impl Interpreter {
             steps: 0,
             max_call_depth,
             call_depth: 0,
+            output_limit,
+            output_truncated: false,
         };
         this.install_builtins();
         this
@@ -245,6 +265,10 @@ impl Interpreter {
             .collect();
         names.sort_by(|a, b| a.0.cmp(&b.0));
         names
+    }
+
+    pub fn take_output_with_truncation(self) -> (Vec<String>, bool) {
+        (self.output, self.output_truncated)
     }
 
     fn eval_statements(&mut self, statements: &[Stmt]) -> JsResult<Flow> {
@@ -846,7 +870,7 @@ impl Interpreter {
     ) -> JsResult<Value> {
         match name {
             "print" => {
-                self.output.push(
+                self.push_output(
                     args.first()
                         .cloned()
                         .unwrap_or(Value::Undefined)
@@ -1006,6 +1030,17 @@ impl Interpreter {
 
     fn leave_call(&mut self) {
         self.call_depth = self.call_depth.saturating_sub(1);
+    }
+
+    fn push_output(&mut self, text: String) {
+        if self
+            .output_limit
+            .is_some_and(|limit| self.output.len() >= limit)
+        {
+            self.output_truncated = true;
+            return;
+        }
+        self.output.push(text);
     }
 }
 

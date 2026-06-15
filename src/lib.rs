@@ -20,27 +20,30 @@ pub fn run_source(source: &str) -> JsResult<Value> {
 }
 
 pub fn run_source_with_output(source: &str) -> JsResult<(Value, Vec<String>)> {
-    run_source_with_output_inner(source, interpreter::Interpreter::new())
+    let (value, output, _) = run_source_with_output_inner(source, interpreter::Interpreter::new())?;
+    Ok((value, output))
 }
 
 pub fn run_source_with_output_and_step_limit(
     source: &str,
     max_execution_steps: usize,
 ) -> JsResult<(Value, Vec<String>)> {
-    run_source_with_output_inner(
+    let (value, output, _) = run_source_with_output_inner(
         source,
         interpreter::Interpreter::with_step_limit(max_execution_steps),
-    )
+    )?;
+    Ok((value, output))
 }
 
 pub fn run_source_with_output_and_call_depth_limit(
     source: &str,
     max_call_depth: usize,
 ) -> JsResult<(Value, Vec<String>)> {
-    run_source_with_output_inner(
+    let (value, output, _) = run_source_with_output_inner(
         source,
         interpreter::Interpreter::with_call_depth_limit(max_call_depth),
-    )
+    )?;
+    Ok((value, output))
 }
 
 pub fn run_source_with_output_and_limits(
@@ -48,20 +51,48 @@ pub fn run_source_with_output_and_limits(
     max_execution_steps: usize,
     max_call_depth: usize,
 ) -> JsResult<(Value, Vec<String>)> {
-    run_source_with_output_inner(
+    let (value, output, _) = run_source_with_output_inner(
         source,
         interpreter::Interpreter::with_limits(max_execution_steps, max_call_depth),
+    )?;
+    Ok((value, output))
+}
+
+pub fn run_source_with_limited_output(
+    source: &str,
+    max_output_lines: usize,
+) -> JsResult<(Value, Vec<String>, bool)> {
+    run_source_with_output_inner(
+        source,
+        interpreter::Interpreter::with_output_limit(max_output_lines),
+    )
+}
+
+pub fn run_source_with_output_and_all_limits(
+    source: &str,
+    max_execution_steps: usize,
+    max_call_depth: usize,
+    max_output_lines: usize,
+) -> JsResult<(Value, Vec<String>, bool)> {
+    run_source_with_output_inner(
+        source,
+        interpreter::Interpreter::with_limits_and_output_limit(
+            max_execution_steps,
+            max_call_depth,
+            max_output_lines,
+        ),
     )
 }
 
 fn run_source_with_output_inner(
     source: &str,
     mut interpreter: interpreter::Interpreter,
-) -> JsResult<(Value, Vec<String>)> {
+) -> JsResult<(Value, Vec<String>, bool)> {
     let tokens = lexer::lex(source)?;
     let program = parser::parse(tokens)?;
     let value = interpreter.run(&program)?;
-    Ok((value, interpreter.take_output()))
+    let (output, output_truncated) = interpreter.take_output_with_truncation();
+    Ok((value, output, output_truncated))
 }
 
 #[cfg(test)]
@@ -170,5 +201,31 @@ mod tests {
     #[test]
     fn uninitialized_let_can_be_assigned_later() {
         assert_eq!(run_source("let x; x = 4; x;").unwrap(), Value::Number(4.0));
+    }
+
+    #[test]
+    fn limited_output_stops_collecting_extra_lines() {
+        let source = r#"
+            print(1);
+            print(2);
+            print(3);
+        "#;
+        let (value, output, output_truncated) = run_source_with_limited_output(source, 2).unwrap();
+
+        assert_eq!(value, Value::Undefined);
+        assert_eq!(output, vec!["1".to_string(), "2".to_string()]);
+        assert!(output_truncated);
+    }
+
+    #[test]
+    fn limited_output_is_not_truncated_at_limit() {
+        let source = r#"
+            print(1);
+            print(2);
+        "#;
+        let (_, output, output_truncated) = run_source_with_limited_output(source, 2).unwrap();
+
+        assert_eq!(output, vec!["1".to_string(), "2".to_string()]);
+        assert!(!output_truncated);
     }
 }
