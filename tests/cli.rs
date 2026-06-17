@@ -47,3 +47,34 @@ fn agent_eval_wraps_parse_error_in_result() {
     assert!(stdout.contains("\"ok\":false"));
     assert!(stdout.contains("parse error"));
 }
+
+#[test]
+fn eval_executes_file_with_objects_arrays_and_prototypes() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .arg("examples/demo.js")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "21\n2,4,6\n7"
+    );
+}
+
+#[test]
+fn agent_eval_emits_structured_array_result() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args([
+            "--agent-eval",
+            "let values=[1,2,3]; values.map(function(x){return x+1;}).join(',');",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"ok\":true"));
+    assert!(stdout.contains("\"value\":\"2,3,4\""));
+    assert!(stdout.contains("\"value_type\":\"string\""));
+}
