@@ -1182,4 +1182,73 @@ mod tests {
 
         assert!(error.to_string().contains("continue used outside loop"));
     }
+
+    #[test]
+    fn for_loop_runs_init_condition_and_update() {
+        let src = r#"
+            let total = 0;
+            for (let i = 0; i < 4; i = i + 1) {
+                total = total + i;
+            }
+            total;
+        "#;
+
+        assert_eq!(run_source(src).unwrap(), Value::Number(6.0));
+    }
+
+    #[test]
+    fn switch_matches_case_and_stops_at_break() {
+        let src = r#"
+            let value = 2;
+            let label = "";
+            switch (value) {
+                case 1:
+                    label = "one";
+                    break;
+                case 2:
+                    label = "two";
+                    break;
+                default:
+                    label = "other";
+            }
+            label;
+        "#;
+
+        assert_eq!(run_source(src).unwrap(), Value::String("two".into()));
+    }
+
+    #[test]
+    fn try_catch_finally_handles_throw_and_runs_finally() {
+        let src = r#"
+            let message = "";
+            let cleaned = false;
+            try {
+                throw Error("boom");
+            } catch (err) {
+                message = err.message;
+            } finally {
+                cleaned = true;
+            }
+            message + ":" + cleaned;
+        "#;
+
+        assert_eq!(run_source(src).unwrap(), Value::String("boom:true".into()));
+    }
+
+    #[test]
+    fn object_and_array_builtins_cover_agent_style_data_flow() {
+        let src = r#"
+            let input = [1, 2, 3];
+            let output = input.map(function (value) {
+                return value * 3;
+            });
+            let summary = {
+                tag: Object.prototype.toString(),
+                values: output.join("|")
+            };
+            JSON.stringify(summary.values);
+        "#;
+
+        assert_eq!(run_source(src).unwrap(), Value::String("3|6|9".into()));
+    }
 }
