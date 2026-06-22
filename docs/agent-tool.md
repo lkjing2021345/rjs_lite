@@ -43,6 +43,8 @@ let runtime = rjs_lite::AgentRuntime::new(rjs_lite::ExecutionContext {
     limits: rjs_lite::RuntimeLimits {
         max_source_bytes: 64 * 1024,
         max_output_lines: 256,
+        max_execution_steps: 100_000,
+        max_call_depth: 32,
     },
     host_functions: vec![rjs_lite::HostFunction {
         name: "print".to_string(),

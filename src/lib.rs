@@ -11,6 +11,7 @@ pub use agent::{
     AgentRuntime, AgentToolResult, ExecutionContext, HostFunction, RuntimeLimits, run_agent_tool,
 };
 pub use error::{JsError, JsResult, Span};
+pub use interpreter::InterpreterLimits;
 pub use value::Value;
 
 pub fn run_source(source: &str) -> JsResult<Value> {
@@ -23,6 +24,17 @@ pub fn run_source_with_output(source: &str) -> JsResult<(Value, Vec<String>)> {
     let tokens = lexer::lex(source)?;
     let program = parser::parse(tokens)?;
     let mut interpreter = interpreter::Interpreter::new();
+    let value = interpreter.run(&program)?;
+    Ok((value, interpreter.take_output()))
+}
+
+pub fn run_source_with_output_and_limits(
+    source: &str,
+    limits: InterpreterLimits,
+) -> JsResult<(Value, Vec<String>)> {
+    let tokens = lexer::lex(source)?;
+    let program = parser::parse(tokens)?;
+    let mut interpreter = interpreter::Interpreter::with_limits(limits);
     let value = interpreter.run(&program)?;
     Ok((value, interpreter.take_output()))
 }

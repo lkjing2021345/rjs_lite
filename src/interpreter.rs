@@ -66,6 +66,12 @@ enum Flow {
     Break,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterpreterLimits {
+    pub max_execution_steps: usize,
+    pub max_call_depth: usize,
+}
+
 struct RefTarget {
     object: ObjectRef,
     property: String,
@@ -80,16 +86,28 @@ pub struct Interpreter {
     function_proto: ObjectRef,
     array_proto: ObjectRef,
     error_proto: ObjectRef,
+    limits: Option<InterpreterLimits>,
+    steps_remaining: usize,
+    call_depth: usize,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
+        Self::new_with_limits(None)
+    }
+
+    pub fn with_limits(limits: InterpreterLimits) -> Self {
+        Self::new_with_limits(Some(limits))
+    }
+
+    fn new_with_limits(limits: Option<InterpreterLimits>) -> Self {
         let env = Env::new();
         let global = Object::plain();
         let object_proto = Object::plain();
         let function_proto = Object::plain();
         let array_proto = Object::plain();
         let error_proto = Object::plain();
+        let steps_remaining = limits.map(|limits| limits.max_execution_steps).unwrap_or(0);
         let mut this = Self {
             env,
             closures: HashMap::new(),
@@ -99,6 +117,9 @@ impl Interpreter {
             function_proto,
             array_proto,
             error_proto,
+            limits,
+            steps_remaining,
+            call_depth: 0,
         };
         this.install_builtins();
         this
@@ -210,6 +231,26 @@ impl Interpreter {
         self.output
     }
 
+    fn tick(&mut self) -> JsResult<()> {
+        if self.limits.is_some() {
+            if self.steps_remaining == 0 {
+                return Err(JsError::runtime("execution step limit exceeded"));
+            }
+            self.steps_remaining -= 1;
+        }
+        Ok(())
+    }
+
+    fn enter_call(&mut self) -> JsResult<()> {
+        if let Some(limits) = self.limits
+            && self.call_depth >= limits.max_call_depth
+        {
+            return Err(JsError::runtime("call depth limit exceeded"));
+        }
+        self.call_depth += 1;
+        Ok(())
+    }
+
     fn eval_statements(&mut self, statements: &[Stmt]) -> JsResult<Flow> {
         let mut last = Value::Undefined;
         for stmt in statements {
@@ -222,6 +263,7 @@ impl Interpreter {
     }
 
     fn eval_stmt(&mut self, stmt: &Stmt) -> JsResult<Flow> {
+        self.tick()?;
         match stmt {
             Stmt::VarDecl {
                 name,
@@ -335,6 +377,7 @@ impl Interpreter {
                 }
                 let mut last = Value::Undefined;
                 loop {
+                    self.tick()?;
                     if let Some(condition) = condition
                         && !self.eval_expr(condition)?.is_truthy()
                     {
@@ -419,6 +462,7 @@ impl Interpreter {
     }
 
     fn eval_expr(&mut self, expr: &Expr) -> JsResult<Value> {
+        self.tick()?;
         match expr {
             Expr::Number(n) => Ok(Value::Number(*n)),
             Expr::String(s) => Ok(Value::String(s.clone())),
@@ -716,6 +760,19 @@ impl Interpreter {
     }
 
     fn call(
+        &mut self,
+        callee: Value,
+        args: Vec<Value>,
+        this_value: Value,
+        construct: bool,
+    ) -> JsResult<Value> {
+        self.enter_call()?;
+        let result = self.call_inner(callee, args, this_value, construct);
+        self.call_depth -= 1;
+        result
+    }
+
+    fn call_inner(
         &mut self,
         callee: Value,
         args: Vec<Value>,

@@ -1,9 +1,11 @@
-use crate::{JsError, Value, run_source_with_output};
+use crate::{InterpreterLimits, JsError, Value, run_source_with_output_and_limits};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeLimits {
     pub max_source_bytes: usize,
     pub max_output_lines: usize,
+    pub max_execution_steps: usize,
+    pub max_call_depth: usize,
 }
 
 impl Default for RuntimeLimits {
@@ -11,6 +13,8 @@ impl Default for RuntimeLimits {
         Self {
             max_source_bytes: 64 * 1024,
             max_output_lines: 256,
+            max_execution_steps: 100_000,
+            max_call_depth: 32,
         }
     }
 }
@@ -64,7 +68,13 @@ impl AgentRuntime {
             );
         }
 
-        match run_source_with_output(source) {
+        match run_source_with_output_and_limits(
+            source,
+            InterpreterLimits {
+                max_execution_steps: self.context.limits.max_execution_steps,
+                max_call_depth: self.context.limits.max_call_depth,
+            },
+        ) {
             Ok((value, mut output)) => {
                 let output_truncated = output.len() > self.context.limits.max_output_lines;
                 output.truncate(self.context.limits.max_output_lines);
@@ -208,6 +218,8 @@ mod tests {
             limits: RuntimeLimits {
                 max_source_bytes: 3,
                 max_output_lines: 1,
+                max_execution_steps: 10,
+                max_call_depth: 4,
             },
             ..ExecutionContext::default()
         });
@@ -215,5 +227,60 @@ mod tests {
         let result = runtime.run("print(1);");
         assert!(!result.ok);
         assert!(result.error.unwrap().contains("limit"));
+    }
+
+    #[test]
+    fn agent_runtime_applies_execution_step_limit() {
+        let runtime = AgentRuntime::new(ExecutionContext {
+            limits: RuntimeLimits {
+                max_execution_steps: 20,
+                ..RuntimeLimits::default()
+            },
+            ..ExecutionContext::default()
+        });
+
+        let result = runtime.run("while (true) {}");
+        assert!(!result.ok);
+        assert!(
+            result
+                .error
+                .unwrap()
+                .contains("execution step limit exceeded")
+        );
+    }
+
+    #[test]
+    fn agent_runtime_applies_execution_step_limit_to_empty_for_loop() {
+        let runtime = AgentRuntime::new(ExecutionContext {
+            limits: RuntimeLimits {
+                max_execution_steps: 20,
+                ..RuntimeLimits::default()
+            },
+            ..ExecutionContext::default()
+        });
+
+        let result = runtime.run("for (;;) {}");
+        assert!(!result.ok);
+        assert!(
+            result
+                .error
+                .unwrap()
+                .contains("execution step limit exceeded")
+        );
+    }
+
+    #[test]
+    fn agent_runtime_applies_call_depth_limit() {
+        let runtime = AgentRuntime::new(ExecutionContext {
+            limits: RuntimeLimits {
+                max_call_depth: 4,
+                ..RuntimeLimits::default()
+            },
+            ..ExecutionContext::default()
+        });
+
+        let result = runtime.run("function loop(){ return loop(); } loop();");
+        assert!(!result.ok);
+        assert!(result.error.unwrap().contains("call depth limit exceeded"));
     }
 }
