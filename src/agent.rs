@@ -268,6 +268,28 @@ mod tests {
     }
 
     #[test]
+    fn agent_runtime_applies_execution_step_limit_to_empty_for_loop() {
+        let runtime = AgentRuntime::new(ExecutionContext {
+            limits: RuntimeLimits {
+                max_source_bytes: 64 * 1024,
+                max_output_lines: 256,
+                max_execution_steps: 20,
+                max_call_depth: 16,
+            },
+            ..ExecutionContext::default()
+        });
+
+        let result = runtime.run("for (;;) {}");
+        assert!(!result.ok);
+        assert!(
+            result
+                .error
+                .unwrap()
+                .contains("execution step limit exceeded")
+        );
+    }
+
+    #[test]
     fn agent_runtime_applies_call_depth_limit() {
         let runtime = AgentRuntime::new(ExecutionContext {
             limits: RuntimeLimits {

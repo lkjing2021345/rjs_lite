@@ -402,6 +402,7 @@ impl Interpreter {
                 }
                 let mut last = Value::Undefined;
                 loop {
+                    self.step()?;
                     if let Some(condition) = condition
                         && !self.eval_expr(condition)?.is_truthy()
                     {
