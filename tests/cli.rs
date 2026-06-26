@@ -45,5 +45,6 @@ fn agent_eval_wraps_parse_error_in_result() {
 
     assert!(output.status.success());
     assert!(stdout.contains("\"ok\":false"));
+    assert!(stdout.contains("\"error_kind\":\"parse\""));
     assert!(stdout.contains("parse error"));
 }

@@ -13,7 +13,7 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 示例输出：
 
 ```json
-{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error_kind":null,"error":null}
 ```
 
 只要工具进程自身成功运行，Agent 模式总是成功退出。JavaScript 解析或运行时失败会以 `ok:false` 编码在 JSON 结果中。
@@ -26,6 +26,7 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 - `value_type`：运行时类型名称，例如 `number`、`string`、`boolean`、`object`、`undefined` 或 `function`。`null` 遵循 JavaScript 行为，类型报告为 `object`。
 - `output`：捕获到的 `print(value)` 输出行。
 - `output_truncated`：输出是否超过配置的行数限制。
+- `error_kind`：失败时的稳定错误分类，成功时为 `null`。当前取值包括 `lex`、`parse`、`runtime` 和 `source_limit`。
 - `error`：失败时的诊断字符串，成功时为 `null`。
 
 ## Rust API

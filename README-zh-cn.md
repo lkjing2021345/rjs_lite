@@ -80,7 +80,7 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 预期输出一行 JSON：
 
 ```json
-{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error_kind":null,"error":null}
 ```
 
 示例程序：
@@ -126,6 +126,7 @@ JS 源码 -> lexer -> tokens -> parser -> AST -> interpreter -> Value
 - `value_type`：运行时类型，例如 `number`、`string`、`boolean`、`object`、`undefined` 或 `function`
 - `output`：通过 `print(value)` 捕获的输出行
 - `output_truncated`：输出是否被限制截断
+- `error_kind`：失败时的稳定错误分类，成功时为 `null`
 - `error`：失败时的诊断信息，成功时为 `null`
 
 Rust 侧可以直接调用：

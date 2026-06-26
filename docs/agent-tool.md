@@ -13,7 +13,7 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 Example output:
 
 ```json
-{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error_kind":null,"error":null}
 ```
 
 Agent mode always exits successfully when the tool process itself runs. JavaScript parse/runtime failures are encoded in the JSON result with `ok:false`.
@@ -26,6 +26,7 @@ Agent mode always exits successfully when the tool process itself runs. JavaScri
 - `value_type`: runtime type name such as `number`, `string`, `boolean`, `object`, `undefined`, or `function`. `null` follows JavaScript behavior and reports `object`.
 - `output`: captured `print(value)` lines.
 - `output_truncated`: whether output exceeded the configured line limit.
+- `error_kind`: stable error category on failure, or `null` on success. Current values are `lex`, `parse`, `runtime`, and `source_limit`.
 - `error`: diagnostic string on failure, or `null` on success.
 
 ## Rust API

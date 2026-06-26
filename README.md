@@ -64,7 +64,7 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 Example agent result:
 
 ```json
-{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error_kind":null,"error":null}
 ```
 
 Example program:
