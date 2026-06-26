@@ -1,33 +1,38 @@
 # rjs_lite: Lightweight Agent JavaScript Execution Runtime
 
-`rjs_lite` is a lightweight script execution runtime for AI Agent workflows. Its first execution language is a Rust-native JavaScript subset designed for short-lived, high-frequency tool calls.
+`rjs_lite` is a lightweight script execution runtime for AI agent workflows. Its first execution language is a Rust-native JavaScript subset designed for short-lived, high-frequency local tool calls.
 
-The project is not a wrapper around QuickJS, Boa, V8, Node.js, or Deno. Current code implements its own hand-written lexer, parser, AST, runtime value model, lexical environment, tree-walking interpreter, and agent-facing tool result API.
+The project is not a wrapper around QuickJS, Boa, V8, Node.js, or Deno. Current code implements its own hand-written lexer, parser, AST, runtime value model, lexical environment, tree-walking interpreter, and agent-facing result API.
 
 ## Current Status
 
-This repository is an MVP engine scaffold, not a complete ECMAScript implementation yet. It is designed as a native foundation that can be expanded toward test262 coverage and benchmark work.
+This repository is a runnable MVP engine scaffold, not a complete ECMAScript implementation. It is designed as a native foundation that can be expanded toward test262 subset coverage and benchmark work.
 
 Currently supported:
 
 - Number, string, boolean, `null`, and `undefined` literals
-- `let` and `const` bindings
-- Assignment to mutable bindings
-- Arithmetic, comparison, equality, logical, and unary operators
-- Blocks, `if`, `else`, and `while`
-- Function declarations, calls, and `return`
-- Minimal host builtin: `print(value)`
+- `let`, `var`, and `const` bindings, including multiple declarations
+- Assignment to mutable bindings, member assignment, compound assignment, and update operators
+- Arithmetic, comparison, equality, logical, unary, `typeof`, `instanceof`, and conditional operators
+- Blocks, `if`, `else`, `while`, `for`, `switch`, and `break`
+- Function declarations, function expressions, calls, closures, `this`, `new`, and `return`
+- Basic object and array literals, member access, index access, array `length`, and prototype lookup
+- Basic `throw`, `try`, `catch`, and `finally`
+- Minimal builtins: `print(value)`, `Object`, `Array`, `String`, `Number`, `Boolean`, `isNaN`, a placeholder `JSON.stringify`, and basic error constructors
+- A small prototype surface, including `Object.prototype.toString`, `Array.prototype.join`, and `Array.prototype.map`
 - CLI execution from inline source or a `.js` file
 - Agent tool mode with structured JSON result output
-- Unit tests for lexer, parser, and interpreter smoke behavior
+- Unit and CLI tests for lexer, parser, interpreter, agent mode, and selected object/prototype behavior
 
 Not yet supported:
 
-- Object and array semantics
-- Prototype chain and standard library objects
+- Complete object, array, property descriptor, and prototype semantics
+- Complete ECMAScript standard library objects
 - Classes, modules, async, generators, promises, regexps, symbols, BigInt
 - Full ECMAScript type coercion rules
-- test262 harness integration
+- Full strict-mode behavior
+- DOM, browser APIs, npm packages, file APIs, network APIs, process APIs, and OS APIs
+- Published test262 pass-rate tracking
 - JIT, bytecode VM, or advanced optimization pipeline
 
 ## Usage
@@ -38,10 +43,10 @@ Run inline JavaScript:
 cargo run -- -e "let x = 1 + 2 * 3; print(x);"
 ```
 
-Run a file:
+Run a JavaScript file:
 
 ```bash
-cargo run -- examples/demo.js
+cargo run -- path/to/file.js
 ```
 
 Show help:
@@ -95,9 +100,9 @@ Core modules:
 
 ## Agent Tool Mode
 
-AI Agents can call `rjs_lite` as a local JavaScript execution tool through `--agent-eval`. The process prints one JSON object to stdout, making success, final value, captured `print` output, and errors easy to parse.
+AI agents can call `rjs_lite` as a local JavaScript execution tool through `--agent-eval`. The process prints one JSON object to stdout, making success, final value, captured `print` output, and errors easy to parse.
 
-Agent mode is intentionally local and dependency-free. It is not an MCP server, network service, or sandbox guarantee. JavaScript parse/runtime failures are represented as `ok:false` JSON results so agents can handle them as ordinary tool output.
+Agent mode is intentionally local and dependency-free. It is not an MCP server, a network service, or a security sandbox. JavaScript parse/runtime failures are represented as `ok:false` JSON results so agents can handle them as ordinary tool output.
 
 Rust callers can use:
 
@@ -112,9 +117,10 @@ See `docs/agent-tool.md` for the full tool contract.
 
 Function completeness path:
 
-1. Grow language surface from expressions/functions into objects, arrays, and standard builtins.
-2. Add a test262 runner that can filter supported features, record pass rate, and track regressions.
-3. Prioritize high-frequency syntax and APIs used by agent-generated scripts.
+1. Harden object, array, constructor, prototype, and exception semantics against more edge cases.
+2. Expand common builtins used by short agent-generated scripts.
+3. Add a maintained test262 subset workflow that records pass rate and regression categories.
+4. Prioritize high-frequency syntax and APIs used by agent-generated scripts.
 
 Performance benchmark path:
 
@@ -141,6 +147,15 @@ Optional, if Clippy is installed:
 ```bash
 cargo clippy -- -D warnings
 ```
+
+Optional test262 exploration:
+
+```bash
+cargo build --release
+python run_test262.py
+```
+
+The test262 runner expects an upstream `test262/` checkout in the repository root. It is intended for local compatibility exploration and result snapshots, not as a published pass-rate claim.
 
 ## Upload Notes
 

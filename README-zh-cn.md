@@ -1,6 +1,6 @@
 # rjs_lite：面向 AI Agent 的轻量级 JavaScript 执行 Runtime
 
-`rjs_lite` 是一个面向 AI Agent 工作流的轻量级脚本执行 Runtime。它以 Rust 原生 JavaScript 子集作为第一执行语言，服务于短生命周期、高频工具调用、低依赖本地执行等场景。
+`rjs_lite` 是一个面向 AI Agent 工作流的轻量级脚本执行 Runtime。它以 Rust 原生 JavaScript 子集作为第一执行语言，服务于短生命周期、高频本地工具调用、低依赖执行等场景。
 
 本项目不是 QuickJS、Boa、V8、Node.js 或 Deno 的套壳封装。当前代码已经实现自研的词法分析器、语法分析器、AST、运行时值模型、词法作用域环境、树遍历解释器和面向 Agent 的结构化执行结果 API，为后续扩展 ECMAScript 兼容性、test262 测试覆盖率和性能优化打基础。
 
@@ -8,7 +8,7 @@
 
 赛题名称为“面向 AI Agent 的轻量级执行引擎”。本项目将其理解为：给 AI Agent 提供一个本地、轻量、可嵌入的 JavaScript 执行工具，让 Agent 可以把临时脚本交给 Runtime 执行，并获得结构化结果。
 
-本项目当前定位为可运行的 MVP 引擎骨架，重点先完成三件事：
+本项目当前定位为可运行的 MVP 引擎骨架，重点先完成以下事情：
 
 1. 建立原生 JS 引擎核心架构。
 2. 支持基础 JS 语法执行，能通过自带单元测试和 CLI 测试。
@@ -20,24 +20,29 @@
 已支持：
 
 - 数字、字符串、布尔值、`null`、`undefined` 字面量
-- `let` 和 `const` 变量声明
-- 对可变绑定进行赋值
-- 算术、比较、相等、逻辑和一元运算符
-- 代码块、`if`、`else`、`while`
-- 函数声明、函数调用和 `return`
-- 最小宿主内置函数：`print(value)`
+- `let`、`var` 和 `const` 变量声明，包括多变量声明
+- 可变绑定赋值、成员赋值、复合赋值和自增自减
+- 算术、比较、相等、逻辑、一元、`typeof`、`instanceof` 和三元运算符
+- 代码块、`if`、`else`、`while`、`for`、`switch` 和 `break`
+- 函数声明、函数表达式、函数调用、闭包、`this`、`new` 和 `return`
+- 基础对象和数组字面量、成员访问、下标访问、数组 `length` 和原型查找
+- 基础 `throw`、`try`、`catch` 和 `finally`
+- 最小内置能力：`print(value)`、`Object`、`Array`、`String`、`Number`、`Boolean`、`isNaN`、占位版 `JSON.stringify` 和基础错误构造器
+- 小型原型方法面：`Object.prototype.toString`、`Array.prototype.join` 和 `Array.prototype.map`
 - CLI 执行内联源码或 `.js` 文件
 - `--agent-eval` Agent 工具模式，输出结构化 JSON 结果
 - `AgentRuntime`、`ExecutionContext`、`RuntimeLimits` 和 `run_agent_tool` Rust API
-- lexer、parser、interpreter 和 CLI 的基础测试
+- lexer、parser、interpreter、Agent 模式、CLI 和部分对象/原型行为测试
 
 暂不支持：
 
-- 对象和数组完整语义
-- 原型链和 ECMAScript 标准库对象
+- 完整对象、数组、属性描述符和原型语义
+- 完整 ECMAScript 标准库对象
 - class、module、async、generator、promise、regexp、symbol、BigInt
 - 完整 JS 类型隐式转换规则
-- test262 自动化测试框架
+- 完整严格模式行为
+- DOM、浏览器 API、npm packages、文件 API、网络 API、进程 API 和 OS API
+- 已发布的 test262 通过率跟踪
 - JIT、字节码虚拟机和高级优化流水线
 
 ## 快速开始
@@ -54,10 +59,10 @@ cargo run -- -e "let x = 1 + 2 * 3; print(x);"
 7
 ```
 
-执行 JS 文件：
+执行 JavaScript 文件：
 
 ```bash
-cargo run -- examples/demo.js
+cargo run -- path/to/file.js
 ```
 
 查看帮助：
@@ -111,14 +116,14 @@ JS 源码 -> lexer -> tokens -> parser -> AST -> interpreter -> Value
 
 ## Agent 工具模式
 
-从 AI Agent 视角看，`rjs_lite` 可以作为一个本地 JS 执行 tool。Agent 将短小 JavaScript 片段传给 `--agent-eval`，Runtime 执行后返回一个 JSON 对象，包含是否成功、最终值、`print` 输出和错误信息。
+从 AI Agent 视角看，`rjs_lite` 可以作为一个本地 JavaScript 执行工具。Agent 将短小 JavaScript 片段传给 `--agent-eval`，Runtime 执行后返回一个 JSON 对象，包含是否成功、最终值、`print` 输出和错误信息。
 
 字段说明：
 
 - `ok`：JS 执行是否成功
 - `request_id`：执行上下文 ID，CLI 默认是 `local`
 - `value`：最终返回值的字符串形式，失败时为 `null`
-- `value_type`：运行时类型，例如 `number`、`string`、`boolean`
+- `value_type`：运行时类型，例如 `number`、`string`、`boolean`、`object`、`undefined` 或 `function`
 - `output`：通过 `print(value)` 捕获的输出行
 - `output_truncated`：输出是否被限制截断
 - `error`：失败时的诊断信息，成功时为 `null`
@@ -144,9 +149,9 @@ Agent 工具层同样不调用外部 JS 引擎。`--agent-eval` 只是把本项�
 
 功能完整度方向：
 
-1. 扩展对象、数组、属性访问和原型链。
-2. 补齐常用标准库对象和函数。
-3. 接入 test262 runner，记录测试通过率和失败分类。
+1. 加固对象、数组、构造器、原型和异常语义的边界行为。
+2. 补齐短小 agent 生成脚本中常用的标准库对象和函数。
+3. 建立可维护的 test262 子集工作流，记录测试通过率和失败分类。
 4. 优先覆盖 AI agent 场景中高频使用的 JS 子集。
 5. 扩展 HostFunction 注册机制，让 Agent 能显式挂载安全可控的宿主能力。
 
@@ -191,6 +196,15 @@ cargo test
 cargo clippy -- -D warnings
 ```
 
+可选 test262 探索：
+
+```bash
+cargo build --release
+python run_test262.py
+```
+
+test262 runner 需要仓库根目录下存在上游 `test262/` 检出目录。它用于本地兼容性探索和结果快照，不代表项目已经发布 test262 通过率声明。
+
 ## 提交说明
 
 本仓库适合直接上传到 GitLab/Gitee。建议保留 `Cargo.lock`，因为当前项目是可执行程序。
@@ -204,4 +218,4 @@ cargo clippy -- -D warnings
 
 ## 当前阶段说明
 
-当前版本已经能作为比赛项目的初始工程提交，但还不是完整 ECMAScript 引擎。后续开发重点应放在 test262 子集推进、对象模型、标准库、性能基准和字节码执行层。
+当前版本已经能作为比赛项目的 MVP 工程提交，但还不是完整 ECMAScript 引擎。后续开发重点应放在 Agent 资源限制、HostFunction 注册、test262 子集推进、对象模型、标准库、性能基准和字节码执行层。
