@@ -46,6 +46,7 @@ fn agent_eval_wraps_parse_error_in_result() {
 
     assert!(output.status.success());
     assert!(stdout.contains("\"ok\":false"));
+    assert!(stdout.contains("\"error_kind\":\"parse\""));
     assert!(stdout.contains("parse error"));
 }
 
@@ -121,6 +122,7 @@ fn agent_eval_wraps_step_limit_error_in_result() {
 
     assert!(output.status.success());
     assert!(stdout.contains("\"ok\":false"));
+    assert!(stdout.contains("\"error_kind\":\"step_limit\""));
     assert!(stdout.contains("execution step limit exceeded"));
 }
 
@@ -134,6 +136,7 @@ fn agent_eval_wraps_call_depth_error_in_result() {
 
     assert!(output.status.success());
     assert!(stdout.contains("\"ok\":false"));
+    assert!(stdout.contains("\"error_kind\":\"call_depth_limit\""));
     assert!(stdout.contains("call depth limit exceeded"));
 }
 

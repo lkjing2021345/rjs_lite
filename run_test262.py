@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Test262 runner for rjs_lite.
+Optional test262 exploration runner for rjs_lite.
+
+Prerequisites:
+- Build `target/release/rjs_lite.exe` with `cargo build --release`
+- Place an upstream test262 checkout at `./test262`
 
 Methodology (honest, per test262/INTERPRETING.md as far as the engine allows):
 - Walk test262/test/**/*.js , skip *_FIXTURE.js
@@ -12,8 +16,8 @@ Methodology (honest, per test262/INTERPRETING.md as far as the engine allows):
 - Positive test passes  : process exit code == 0
         async test passes: stdout contains 'Test262:AsyncTestComplete' and no 'Test262:AsyncTestFailure'
 - Negative test passes  : process failed AND failure phase matches (parse|runtime)
-        LIMITATION: engine cannot create typed JS Error objects, so the `type`
-        (e.g. SyntaxError vs TypeError) is NOT verified. Phase is matched by
+        LIMITATION: the runner does not verify the requested JS Error `type`
+        (e.g. SyntaxError vs TypeError). Phase is matched by
         mapping our lexer/parser errors -> parse, runtime errors -> runtime.
 - module tests: engine has no module system; run as plain script (will essentially fail)
 """

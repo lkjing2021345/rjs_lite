@@ -1,5 +1,28 @@
 use crate::{JsError, Value, run_source_with_output_and_all_limits};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentErrorKind {
+    Lex,
+    Parse,
+    Runtime,
+    SourceLimit,
+    StepLimit,
+    CallDepthLimit,
+}
+
+impl AgentErrorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lex => "lex",
+            Self::Parse => "parse",
+            Self::Runtime => "runtime",
+            Self::SourceLimit => "source_limit",
+            Self::StepLimit => "step_limit",
+            Self::CallDepthLimit => "call_depth_limit",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeLimits {
     pub max_source_bytes: usize,
@@ -60,6 +83,7 @@ impl AgentRuntime {
         if source.len() > self.context.limits.max_source_bytes {
             return AgentToolResult::failure(
                 self.context.request_id.clone(),
+                AgentErrorKind::SourceLimit,
                 JsError::runtime(format!(
                     "source is {} bytes, limit is {} bytes",
                     source.len(),
@@ -81,9 +105,14 @@ impl AgentRuntime {
                 value: Some(value),
                 output,
                 output_truncated,
+                error_kind: None,
                 error: None,
             },
-            Err(error) => AgentToolResult::failure(self.context.request_id.clone(), error),
+            Err(error) => AgentToolResult::failure(
+                self.context.request_id.clone(),
+                AgentErrorKind::from(&error),
+                error,
+            ),
         }
     }
 }
@@ -102,11 +131,12 @@ pub struct AgentToolResult {
     pub value_type: Option<&'static str>,
     pub output: Vec<String>,
     pub output_truncated: bool,
+    pub error_kind: Option<&'static str>,
     pub error: Option<String>,
 }
 
 impl AgentToolResult {
-    fn failure(request_id: String, error: JsError) -> Self {
+    fn failure(request_id: String, error_kind: AgentErrorKind, error: JsError) -> Self {
         Self {
             ok: false,
             request_id,
@@ -114,21 +144,39 @@ impl AgentToolResult {
             value_type: None,
             output: Vec::new(),
             output_truncated: false,
+            error_kind: Some(error_kind.as_str()),
             error: Some(error.to_string()),
         }
     }
 
     pub fn to_json(&self) -> String {
         format!(
-            "{{\"ok\":{},\"request_id\":{},\"value\":{},\"value_type\":{},\"output\":{},\"output_truncated\":{},\"error\":{}}}",
+            "{{\"ok\":{},\"request_id\":{},\"value\":{},\"value_type\":{},\"output\":{},\"output_truncated\":{},\"error_kind\":{},\"error\":{}}}",
             self.ok,
             json_string(&self.request_id),
             json_optional_string(self.value.as_ref().map(ToString::to_string).as_deref()),
             json_optional_string(self.value_type),
             json_string_array(&self.output),
             self.output_truncated,
+            json_optional_string(self.error_kind),
             json_optional_string(self.error.as_deref())
         )
+    }
+}
+
+impl From<&JsError> for AgentErrorKind {
+    fn from(error: &JsError) -> Self {
+        match error {
+            JsError::Lex { .. } => Self::Lex,
+            JsError::Parse { .. } => Self::Parse,
+            JsError::Runtime { message } if message.contains("execution step limit exceeded") => {
+                Self::StepLimit
+            }
+            JsError::Runtime { message } if message.contains("call depth limit exceeded") => {
+                Self::CallDepthLimit
+            }
+            JsError::Runtime { .. } => Self::Runtime,
+        }
     }
 }
 
@@ -177,6 +225,7 @@ mod tests {
         assert_eq!(result.value, Some(Value::Number(3.0)));
         assert_eq!(result.value_type, Some("number"));
         assert_eq!(result.output, vec!["3".to_string()]);
+        assert_eq!(result.error_kind, None);
         assert_eq!(result.error, None);
     }
 
@@ -186,6 +235,7 @@ mod tests {
         assert!(!result.ok);
         assert_eq!(result.value, None);
         assert!(result.output.is_empty());
+        assert_eq!(result.error_kind, Some("parse"));
         assert!(result.error.unwrap().contains("parse error"));
     }
 
@@ -198,12 +248,13 @@ mod tests {
             value_type: None,
             output: vec!["a\"b".to_string()],
             output_truncated: false,
+            error_kind: Some("runtime"),
             error: Some("bad\\news".to_string()),
         };
 
         assert_eq!(
             result.to_json(),
-            "{\"ok\":false,\"request_id\":\"req\\n1\",\"value\":null,\"value_type\":null,\"output\":[\"a\\\"b\"],\"output_truncated\":false,\"error\":\"bad\\\\news\"}"
+            "{\"ok\":false,\"request_id\":\"req\\n1\",\"value\":null,\"value_type\":null,\"output\":[\"a\\\"b\"],\"output_truncated\":false,\"error_kind\":\"runtime\",\"error\":\"bad\\\\news\"}"
         );
     }
 
@@ -221,6 +272,7 @@ mod tests {
 
         let result = runtime.run("print(1);");
         assert!(!result.ok);
+        assert_eq!(result.error_kind, Some("source_limit"));
         assert!(result.error.unwrap().contains("limit"));
     }
 
@@ -240,6 +292,7 @@ mod tests {
 
         assert!(!result.ok);
         assert!(result.output.is_empty());
+        assert_eq!(result.error_kind, Some("step_limit"));
         assert!(
             result
                 .error
@@ -281,6 +334,7 @@ mod tests {
 
         let result = runtime.run("for (;;) {}");
         assert!(!result.ok);
+        assert_eq!(result.error_kind, Some("step_limit"));
         assert!(
             result
                 .error
@@ -305,6 +359,7 @@ mod tests {
 
         assert!(!result.ok);
         assert!(result.output.is_empty());
+        assert_eq!(result.error_kind, Some("call_depth_limit"));
         assert!(result.error.unwrap().contains("call depth limit exceeded"));
     }
 }

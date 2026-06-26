@@ -1,8 +1,8 @@
 # Agent Tool Mode
 
-`rjs_lite` can be used as a local JavaScript execution tool for AI Agent workflows. The agent submits a small JavaScript snippet, the runtime executes the supported subset, and the process returns one structured JSON result.
+`rjs_lite` can be used as a local JavaScript execution tool for AI agent workflows. The agent submits a small JavaScript snippet, the runtime executes the supported subset, and the process returns one structured JSON result.
 
-This is a local CLI/library contract. It is not an MCP server, network service, or sandbox guarantee.
+This is a local CLI/library contract. It is not an MCP server, a network service, or a security sandbox.
 
 ## CLI Contract
 
@@ -13,7 +13,7 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 Example output:
 
 ```json
-{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error_kind":null,"error":null}
 ```
 
 Agent mode always exits successfully when the tool process itself runs. JavaScript parse/runtime failures are encoded in the JSON result with `ok:false`.
@@ -25,9 +25,10 @@ Agent mode applies the default runtime limits: source text is capped at 64 KiB, 
 - `ok`: whether JavaScript execution succeeded.
 - `request_id`: execution context identifier. Default CLI value is `local`.
 - `value`: final evaluated value rendered as a string, or `null` on failure.
-- `value_type`: runtime type name such as `number`, `string`, `boolean`, `null`, `undefined`, or `function`.
+- `value_type`: runtime type name such as `number`, `string`, `boolean`, `object`, `undefined`, or `function`. `null` follows JavaScript behavior and reports `object`.
 - `output`: captured `print(value)` lines.
 - `output_truncated`: whether output exceeded the configured line limit.
+- `error_kind`: stable error category on failure, or `null` on success. Current values are `lex`, `parse`, `runtime`, `source_limit`, `step_limit`, and `call_depth_limit`.
 - `error`: diagnostic string on failure, or `null` on success.
 
 ## Rust API
@@ -58,19 +59,17 @@ let runtime = rjs_lite::AgentRuntime::new(rjs_lite::ExecutionContext {
 let result = runtime.run("print(42);");
 ```
 
-`host_functions` currently documents the intended host surface. The MVP interpreter exposes `print(value)` only.
+`host_functions` currently documents the intended host surface. The MVP interpreter exposes `print(value)` only; custom host-function registration is planned but not implemented yet.
 
 ## Limitations
 
 - Supports only the documented MVP JavaScript subset.
 - Stops agent-mode execution after the configured interpreter step limit.
 - Stops agent-mode execution after the configured call depth limit.
-- Stops agent-mode execution after the configured interpreter step limit.
-- Stops agent-mode execution after the configured call depth limit.
 - Does not claim full ECMAScript compatibility.
 - Does not claim test262 pass-rate coverage yet.
-- Does not provide a security sandbox guarantee.
-- Does not expose file, network, process, or OS APIs to JavaScript.
+- Does not provide a security sandbox.
+- Does not expose file APIs, network APIs, process APIs, or OS APIs to JavaScript.
 - Does not wrap Node.js, Deno, QuickJS, Boa, V8, or another JS engine.
 
 ## Agent Usage Guidance
@@ -79,7 +78,7 @@ Use this tool for short-lived snippets such as:
 
 - arithmetic and control-flow checks
 - small data transformation logic supported by current syntax
-- glue-code experiments before host tool calls
+- short glue-code experiments before host tool calls
 - deterministic local calculations
 
 Avoid using it for untrusted code isolation, browser APIs, network access, npm packages, large scripts, or full ECMAScript compatibility testing.

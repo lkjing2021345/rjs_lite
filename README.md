@@ -1,37 +1,39 @@
-# rjs_lite: Lightweight Agent JavaScript Execution Runtime
+﻿# rjs_lite: Lightweight Agent JavaScript Execution Runtime
 
-`rjs_lite` is a lightweight script execution runtime for AI Agent workflows. Its first execution language is a Rust-native JavaScript subset designed for short-lived, high-frequency tool calls.
+`rjs_lite` is a lightweight script execution runtime for AI agent workflows. Its first execution language is a Rust-native JavaScript subset designed for short-lived, high-frequency local tool calls.
 
-The project is not a wrapper around QuickJS, Boa, V8, Node.js, or Deno. Current code implements its own hand-written lexer, parser, AST, runtime value model, lexical environment, tree-walking interpreter, and agent-facing tool result API.
+The project is not a wrapper around QuickJS, Boa, V8, Node.js, or Deno. Current code implements its own hand-written lexer, parser, AST, runtime value model, lexical environment, tree-walking interpreter, and agent-facing result API.
 
 ## Current Status
 
-This repository is an MVP engine scaffold, not a complete ECMAScript implementation yet. It is designed as a native foundation that can be expanded toward test262 coverage and benchmark work.
+This repository is a runnable MVP engine scaffold, not a complete ECMAScript implementation. It is designed as a native foundation that can be expanded toward test262 subset coverage and benchmark work.
 
 Currently supported:
 
 - Number, string, boolean, `null`, and `undefined` literals
-- `let` and `const` bindings
-- Assignment to mutable bindings
-- Arithmetic, comparison, equality, logical, and unary operators
+- `let`, `var`, and `const` bindings, including uninitialized `let` declarations
+- Assignment to mutable bindings, member assignment, compound assignment, and update operators
+- Arithmetic, comparison, equality, logical, unary, `typeof`, `instanceof`, and conditional operators
 - Blocks, `if`, `else`, `while`, `for`, `switch`, `break`, and `continue`
-- Function declarations, function expressions, calls, closures, and `return`
-- Object and array literals, member/index access, assignment, and array `length`
+- Function declarations, function expressions, calls, closures, `this`, `new`, and `return`
+- Object and array literals, member/index access, assignment, array `length`, and prototype lookup
 - `this` binding, `new`, constructor prototypes, and `instanceof`
 - `throw`, `try`, `catch`, and `finally`
 - Minimal host builtin: `print(value)`
-- Small standard surface: `Object`, `Array`, `String`, `Number`, `Boolean`, `Error` constructors, `isNaN`, `JSON.stringify`, `Object.prototype.toString`, `Array.prototype.map`, and `Array.prototype.join`
+- Small standard surface: `Object`, `Array`, `String`, `Number`, `Boolean`, `Error` constructors, `isNaN`, placeholder `JSON.stringify`, `Object.prototype.toString`, `Array.prototype.map`, and `Array.prototype.join`
 - Interactive REPL with state preservation, multi-line input, and commands
 - CLI execution from inline source or a `.js` file
-- Agent tool mode with structured JSON result output
-- Unit tests for lexer, parser, interpreter, CLI, and REPL behavior
+- Agent tool mode with structured JSON result output, stable `error_kind` values, source-size limit, output-line limit, execution-step limit, and call-depth limit
+- Unit tests for lexer, parser, interpreter, Agent mode, CLI, and REPL behavior
 - A local `run_test262.py` runner scaffold for use with an external test262 checkout
 
 Not yet supported:
 
-- Full object, array, prototype, and standard-library semantics
+- Full object, array, property descriptor, prototype, and standard-library semantics
 - Classes, modules, async, generators, promises, regexps, symbols, BigInt
 - Full ECMAScript type coercion rules
+- Full strict-mode behavior
+- DOM, browser APIs, npm packages, file APIs, network APIs, process APIs, and OS APIs
 - Bundled test262 checkout or published test262 pass-rate tracking
 - JIT, bytecode VM, or advanced optimization pipeline
 
@@ -49,7 +51,7 @@ Or explicitly:
 cargo run -- --repl
 ```
 
-In the REPL, type JavaScript line by line. Variables persist across lines. Multi-line input is supported — the prompt changes to `...` while braces or parentheses are unbalanced. Use `.exit` or `.quit` to leave, or press Ctrl+D.
+In the REPL, type JavaScript line by line. Variables persist across lines. Multi-line input is supported: the prompt changes to `...` while braces or parentheses are unbalanced. Use `.exit` or `.quit` to leave, or press Ctrl+D.
 
 ```text
 rjs_lite REPL. Type .exit or .quit to exit. Type .help for commands.
@@ -77,10 +79,10 @@ Run inline JavaScript:
 cargo run -- -e "let x = 1 + 2 * 3; print(x);"
 ```
 
-Run a file:
+Run a JavaScript file:
 
 ```bash
-cargo run -- examples/demo.js
+cargo run -- path/to/file.js
 ```
 
 Show help:
@@ -98,7 +100,7 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 Example agent result:
 
 ```json
-{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error_kind":null,"error":null}
 ```
 
 Example program:
@@ -134,9 +136,9 @@ Core modules:
 
 ## Agent Tool Mode
 
-AI Agents can call `rjs_lite` as a local JavaScript execution tool through `--agent-eval`. The process prints one JSON object to stdout, making success, final value, captured `print` output, and errors easy to parse.
+AI agents can call `rjs_lite` as a local JavaScript execution tool through `--agent-eval`. The process prints one JSON object to stdout, making success, final value, captured `print` output, and errors easy to parse.
 
-Agent mode is intentionally local and dependency-free. It is not an MCP server, network service, or sandbox guarantee. JavaScript parse/runtime failures are represented as `ok:false` JSON results so agents can handle them as ordinary tool output.
+Agent mode is intentionally local and dependency-free. It is not an MCP server, a network service, or a security sandbox. JavaScript parse/runtime failures are represented as `ok:false` JSON results so agents can handle them as ordinary tool output.
 
 Rust callers can use:
 
@@ -151,9 +153,10 @@ See `docs/agent-tool.md` for the full tool contract.
 
 Function completeness path:
 
-1. Grow language surface from expressions/functions into objects, arrays, and standard builtins.
-2. Use the existing `run_test262.py` scaffold with a local `test262/` checkout, then publish pass-rate tracking and failure categories.
-3. Prioritize high-frequency syntax and APIs used by agent-generated scripts.
+1. Harden object, array, constructor, prototype, and exception semantics against more edge cases.
+2. Expand common builtins used by short agent-generated scripts.
+3. Add a maintained test262 subset workflow that records pass rate and regression categories.
+4. Prioritize high-frequency syntax and APIs used by agent-generated scripts.
 
 Performance benchmark path:
 
