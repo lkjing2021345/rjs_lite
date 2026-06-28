@@ -148,6 +148,10 @@ impl Interpreter {
                 .borrow_mut()
                 .props
                 .insert("map".into(), self.native_method("Array.prototype.map"));
+            self.array_proto.borrow_mut().props.insert(
+                "forEach".into(),
+                self.native_method("Array.prototype.forEach"),
+            );
             self.array_proto
                 .borrow_mut()
                 .props
@@ -917,6 +921,26 @@ impl Interpreter {
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
+            "Array.prototype.forEach" => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = this_value {
+                    let source_array = Value::Object(o.clone());
+                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    for (index, value) in items.into_iter().enumerate() {
+                        self.call(
+                            callback.clone(),
+                            vec![value, Value::Number(index as f64), source_array.clone()],
+                            Value::Object(self.global.clone()),
+                            false,
+                        )?;
+                    }
+                }
+                Ok(Value::Undefined)
+            }
             _ => {
                 if let Some(func) = construct {
                     let obj = Object::plain();
@@ -982,6 +1006,24 @@ mod tests {
     #[test]
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_foreach_runs_callback_for_each_item() {
+        let src = "let total=0; [1,2,3].forEach(function(v){ total = total + v; }); total;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(6.0));
+    }
+
+    #[test]
+    fn array_foreach_passes_index_and_source_array() {
+        let src = "let out=''; let a=[10,20]; a.forEach(function(v,i,arr){ out = out + (v + i + arr.length); }); out;";
+        assert_eq!(run_source(src).unwrap(), Value::String("1223".into()));
+    }
+
+    #[test]
+    fn array_foreach_returns_undefined() {
+        let src = "let result = [1].forEach(function(v){ return v + 1; }); result === undefined;";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 
