@@ -19,7 +19,7 @@ Currently supported:
 - Basic object and array literals, member access, index access, array `length`, and prototype lookup
 - Basic `throw`, `try`, `catch`, and `finally`
 - Minimal builtins: `print(value)`, `Object`, `Array`, `String`, `Number`, `Boolean`, `isNaN`, a placeholder `JSON.stringify`, and basic error constructors
-- A small prototype surface, including `Object.prototype.toString`, `Array.prototype.join`, and `Array.prototype.map`
+- A small prototype surface, including `Object.prototype.toString`, `Array.prototype.join`, `Array.prototype.map`, and `Array.prototype.filter`
 - CLI execution from inline source or a `.js` file
 - Agent tool mode with structured JSON result output
 - Unit and CLI tests for lexer, parser, interpreter, agent mode, and selected object/prototype behavior

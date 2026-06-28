@@ -148,6 +148,10 @@ impl Interpreter {
                 .borrow_mut()
                 .props
                 .insert("map".into(), self.native_method("Array.prototype.map"));
+            self.array_proto.borrow_mut().props.insert(
+                "filter".into(),
+                self.native_method("Array.prototype.filter"),
+            );
             self.array_proto
                 .borrow_mut()
                 .props
@@ -917,6 +921,36 @@ impl Interpreter {
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
+            "Array.prototype.filter" => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = this_value {
+                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let mut filtered = Vec::new();
+                    for value in items {
+                        if self
+                            .call(
+                                callback.clone(),
+                                vec![value.clone()],
+                                Value::Object(self.global.clone()),
+                                false,
+                            )?
+                            .is_truthy()
+                        {
+                            filtered.push(value);
+                        }
+                    }
+                    let obj = Object::with_internal(Internal::Array(filtered));
+                    obj.borrow_mut().proto = Some(self.array_proto.clone());
+                    return Ok(Value::Object(obj));
+                }
+                let obj = Object::with_internal(Internal::Array(Vec::new()));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
+            }
             _ => {
                 if let Some(func) = construct {
                     let obj = Object::plain();
@@ -983,6 +1017,18 @@ mod tests {
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_filter_keeps_truthy_callback_results() {
+        let src = "let a=[1,2,3,4]; a.filter(function(x){ return x > 2; }).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("3,4".into()));
+    }
+
+    #[test]
+    fn array_filter_returns_empty_array_for_no_matches() {
+        let src = "let a=[1,2]; a.filter(function(x){ return x > 5; }).length;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(0.0));
     }
 
     #[test]

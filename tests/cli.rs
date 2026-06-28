@@ -47,3 +47,20 @@ fn agent_eval_wraps_parse_error_in_result() {
     assert!(stdout.contains("\"ok\":false"));
     assert!(stdout.contains("parse error"));
 }
+
+#[test]
+fn agent_eval_emits_array_filter_result() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args([
+            "--agent-eval",
+            "let a=[1,2,3,4]; a.filter(function(x){return x>2;}).join(',');",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"ok\":true"));
+    assert!(stdout.contains("\"value\":\"3,4\""));
+    assert!(stdout.contains("\"value_type\":\"string\""));
+}
