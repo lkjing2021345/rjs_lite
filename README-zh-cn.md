@@ -173,6 +173,8 @@ println!("{}", result.to_json());
 
 更多契约说明见 `docs/agent-tool-zh-cn.md`。
 
+当前 JavaScript 子集说明见 `docs/language-subset-zh-cn.md`。
+
 ## 非套壳说明
 
 项目当前没有依赖任何外部 JS 引擎，也没有通过子进程调用 Node.js、Deno、QuickJS 或 Boa。
