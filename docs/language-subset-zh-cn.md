@@ -24,9 +24,10 @@ AI Agent 脚本的轻量级 Runtime，而不是完整 ECMAScript 引擎。
 - 对象工具：`Object.keys`
 - 占位 JSON 支持：`JSON.stringify`
 - 小型原型方法面：`Object.prototype.toString`、`Array.prototype.join` 和
-  `Array.prototype.map`、`Array.prototype.filter`、`Array.prototype.push`
-- `Array.prototype.map` 和 `Array.prototype.filter` 回调会接收当前值、从 0
-  开始的索引和源数组
+  `Array.prototype.map`、`Array.prototype.filter`、`Array.prototype.forEach`、
+  `Array.prototype.push`
+- `Array.prototype.map`、`Array.prototype.filter` 和
+  `Array.prototype.forEach` 回调会接收当前值、从 0 开始的索引和源数组
 - 交互式 REPL，支持状态保留、多行输入和点命令
 
 ## Agent 工具契约

@@ -29,10 +29,11 @@ ECMAScript engine.
 - Object utility: `Object.keys`
 - Placeholder JSON support: `JSON.stringify`
 - Small prototype surface: `Object.prototype.toString`,
-  `Array.prototype.join`, `Array.prototype.map`, `Array.prototype.filter`, and
-  `Array.prototype.push`
-- `Array.prototype.map` and `Array.prototype.filter` callbacks receive the
-  current value, zero-based index, and source array
+  `Array.prototype.join`, `Array.prototype.map`, `Array.prototype.filter`,
+  `Array.prototype.forEach`, and `Array.prototype.push`
+- `Array.prototype.map`, `Array.prototype.filter`, and
+  `Array.prototype.forEach` callbacks receive the current value, zero-based
+  index, and source array
 - Interactive REPL with state preservation, multi-line input, and dot commands
 
 ## Agent Tool Contract
