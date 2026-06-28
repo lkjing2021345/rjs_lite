@@ -47,3 +47,17 @@ fn agent_eval_wraps_parse_error_in_result() {
     assert!(stdout.contains("\"ok\":false"));
     assert!(stdout.contains("parse error"));
 }
+
+#[test]
+fn agent_eval_emits_object_keys_result() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["--agent-eval", "let o={b:2,a:1}; Object.keys(o).join(',');"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"ok\":true"));
+    assert!(stdout.contains("\"value\":\"a,b\""));
+    assert!(stdout.contains("\"value_type\":\"string\""));
+}

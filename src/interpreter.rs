@@ -134,6 +134,10 @@ impl Interpreter {
                 .borrow_mut()
                 .props
                 .insert("prototype".into(), Value::Object(self.object_proto.clone()));
+            object_ctor
+                .borrow_mut()
+                .props
+                .insert("keys".into(), self.native_method("Object.keys"));
             self.object_proto.borrow_mut().props.insert(
                 "toString".into(),
                 self.native_method("Object.prototype.toString"),
@@ -826,6 +830,27 @@ impl Interpreter {
                     Ok(Value::Object(obj))
                 }
             }
+            "Object.keys" => {
+                let Some(Value::Object(object)) = args.first().cloned() else {
+                    return Err(JsError::runtime("Object.keys expects object"));
+                };
+                let object = object.borrow();
+                let mut keys = Vec::new();
+                if let Internal::Array(items) = &object.internal {
+                    keys.extend((0..items.len()).map(|index| index.to_string()));
+                }
+                let mut named_keys = object.props.keys().cloned().collect::<Vec<_>>();
+                named_keys.sort();
+                for key in named_keys {
+                    if !keys.contains(&key) {
+                        keys.push(key);
+                    }
+                }
+                let values = keys.into_iter().map(Value::String).collect();
+                let obj = Object::with_internal(Internal::Array(values));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
+            }
             "Array" => {
                 let obj = Object::with_internal(Internal::Array(args));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
@@ -989,5 +1014,26 @@ mod tests {
     fn instanceof_walks_prototype_chain() {
         let src = "function C(){} let c=new C(); c instanceof C;";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_keys_returns_sorted_own_keys() {
+        let src = "let o={b:2,a:1}; Object.keys(o).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("a,b".into()));
+    }
+
+    #[test]
+    fn object_keys_includes_array_indices() {
+        let src = "let a=[10,20]; a.extra=30; Object.keys(a).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("0,1,extra".into()));
+    }
+
+    #[test]
+    fn object_keys_orders_array_indices_numerically() {
+        let src = "let a=[0,1,2,3,4,5,6,7,8,9,10,11]; Object.keys(a).join(',');";
+        assert_eq!(
+            run_source(src).unwrap(),
+            Value::String("0,1,2,3,4,5,6,7,8,9,10,11".into())
+        );
     }
 }
