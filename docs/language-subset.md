@@ -29,7 +29,7 @@ ECMAScript engine.
 - Object utility: `Object.keys`
 - Placeholder JSON support: `JSON.stringify`
 - Small prototype surface: `Object.prototype.toString`,
-  `Array.prototype.join`, and `Array.prototype.map`
+  `Array.prototype.join`, `Array.prototype.map`, and `Array.prototype.push`
 - Interactive REPL with state preservation, multi-line input, and dot commands
 
 ## Agent Tool Contract

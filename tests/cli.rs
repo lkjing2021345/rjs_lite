@@ -79,6 +79,20 @@ fn agent_eval_emits_object_keys_result() {
 }
 
 #[test]
+fn agent_eval_emits_array_push_result() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["--agent-eval", "let a=[1,2]; a.push(3); a.join(',');"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"ok\":true"));
+    assert!(stdout.contains("\"value\":\"1,2,3\""));
+    assert!(stdout.contains("\"value_type\":\"string\""));
+}
+
+#[test]
 fn eval_executes_file_with_objects_arrays_and_prototypes() {
     let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
         .arg("examples/demo.js")
