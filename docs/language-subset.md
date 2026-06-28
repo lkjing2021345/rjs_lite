@@ -31,6 +31,8 @@ ECMAScript engine.
 - Small prototype surface: `Object.prototype.toString`,
   `Array.prototype.join`, `Array.prototype.map`, `Array.prototype.filter`, and
   `Array.prototype.push`
+- `Array.prototype.map` and `Array.prototype.filter` callbacks receive the
+  current value, zero-based index, and source array
 - Interactive REPL with state preservation, multi-line input, and dot commands
 
 ## Agent Tool Contract
