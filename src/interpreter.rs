@@ -910,12 +910,18 @@ impl Interpreter {
                 let Some(Value::Object(object)) = args.first().cloned() else {
                     return Err(JsError::runtime("Object.keys expects object"));
                 };
-                let mut keys = object.borrow().props.keys().cloned().collect::<Vec<_>>();
-                if let Internal::Array(items) = &object.borrow().internal {
+                let object = object.borrow();
+                let mut keys = Vec::new();
+                if let Internal::Array(items) = &object.internal {
                     keys.extend((0..items.len()).map(|index| index.to_string()));
                 }
-                keys.sort();
-                keys.dedup();
+                let mut named_keys = object.props.keys().cloned().collect::<Vec<_>>();
+                named_keys.sort();
+                for key in named_keys {
+                    if !keys.contains(&key) {
+                        keys.push(key);
+                    }
+                }
                 let values = keys.into_iter().map(Value::String).collect();
                 let obj = Object::with_internal(Internal::Array(values));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
@@ -1282,5 +1288,14 @@ mod tests {
     fn object_keys_includes_array_indices() {
         let src = "let a=[10,20]; a.extra=30; Object.keys(a).join(',');";
         assert_eq!(run_source(src).unwrap(), Value::String("0,1,extra".into()));
+    }
+
+    #[test]
+    fn object_keys_orders_array_indices_numerically() {
+        let src = "let a=[0,1,2,3,4,5,6,7,8,9,10,11]; Object.keys(a).join(',');";
+        assert_eq!(
+            run_source(src).unwrap(),
+            Value::String("0,1,2,3,4,5,6,7,8,9,10,11".into())
+        );
     }
 }
