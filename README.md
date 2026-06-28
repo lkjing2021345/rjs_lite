@@ -20,7 +20,7 @@ Currently supported:
 - `this` binding, `new`, constructor prototypes, and `instanceof`
 - `throw`, `try`, `catch`, and `finally`
 - Minimal host builtin: `print(value)`
-- Small standard surface: `Object`, `Object.keys`, `Array`, `String`, `Number`, `Boolean`, `Error` constructors, `isNaN`, placeholder `JSON.stringify`, `Object.prototype.toString`, `Array.prototype.map`, `Array.prototype.join`, and `Array.prototype.push`
+- Small standard surface: `Object`, `Object.keys`, `Array`, `String`, `Number`, `Boolean`, `Error` constructors, `isNaN`, placeholder `JSON.stringify`, `Object.prototype.toString`, `Array.prototype.map`, `Array.prototype.filter`, `Array.prototype.join`, and `Array.prototype.push`
 - Interactive REPL with state preservation, multi-line input, and commands
 - CLI execution from inline source or a `.js` file
 - Agent tool mode with structured JSON result output, stable `error_kind` values, source-size limit, output-line limit, execution-step limit, and call-depth limit

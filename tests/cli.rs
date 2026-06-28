@@ -124,6 +124,23 @@ fn agent_eval_emits_structured_array_result() {
 }
 
 #[test]
+fn agent_eval_emits_array_filter_result() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args([
+            "--agent-eval",
+            "let a=[1,2,3,4]; a.filter(function(x){return x>2;}).join(',');",
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"ok\":true"));
+    assert!(stdout.contains("\"value\":\"3,4\""));
+    assert!(stdout.contains("\"value_type\":\"string\""));
+}
+
+#[test]
 fn agent_eval_marks_output_truncated() {
     let source = (0..257)
         .map(|i| format!("print({i});"))
