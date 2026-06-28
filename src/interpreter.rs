@@ -152,6 +152,10 @@ impl Interpreter {
                 .borrow_mut()
                 .props
                 .insert("join".into(), self.native_method("Array.prototype.join"));
+            self.array_proto
+                .borrow_mut()
+                .props
+                .insert("push".into(), self.native_method("Array.prototype.push"));
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
             string_ctor
@@ -890,6 +894,15 @@ impl Interpreter {
                 }
                 Ok(Value::String(String::new()))
             }
+            "Array.prototype.push" => {
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                {
+                    items.extend(args);
+                    return Ok(Value::Number(items.len() as f64));
+                }
+                Ok(Value::Number(0.0))
+            }
             "Array.prototype.map" => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
@@ -982,6 +995,18 @@ mod tests {
     #[test]
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_push_appends_values_and_returns_length() {
+        let src = "let a=[1,2]; let n=a.push(3,4); n + ':' + a.join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("4:1,2,3,4".into()));
+    }
+
+    #[test]
+    fn array_push_updates_length_and_indices() {
+        let src = "let a=[]; a.push(1); a.push(2); (a.length === 2) && (a[1] === 2);";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 
