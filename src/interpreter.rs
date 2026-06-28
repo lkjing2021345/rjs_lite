@@ -893,6 +893,7 @@ impl Interpreter {
             "Array.prototype.map" => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
+                    let source_array = Value::Object(o.clone());
                     let items = if let Internal::Array(items) = &o.borrow().internal {
                         items.clone()
                     } else {
@@ -900,10 +901,11 @@ impl Interpreter {
                     };
                     let mapped = items
                         .into_iter()
-                        .map(|v| {
+                        .enumerate()
+                        .map(|(index, value)| {
                             self.call(
                                 callback.clone(),
-                                vec![v],
+                                vec![value, Value::Number(index as f64), source_array.clone()],
                                 Value::Object(self.global.clone()),
                                 false,
                             )
@@ -983,6 +985,18 @@ mod tests {
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_map_passes_index_to_callback() {
+        let src = "let a=[10,20,30]; a.map(function(v,i){ return v + i; }).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("10,21,32".into()));
+    }
+
+    #[test]
+    fn array_map_passes_source_array_to_callback() {
+        let src = "let a=[1,2,3]; a.map(function(v,_i,arr){ return v + arr.length; }).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("4,5,6".into()));
     }
 
     #[test]
