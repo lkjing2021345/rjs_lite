@@ -925,12 +925,23 @@ impl Interpreter {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
                     let source_array = Value::Object(o.clone());
-                    let items = if let Internal::Array(items) = &o.borrow().internal {
-                        items.clone()
+                    let initial_len = if let Internal::Array(items) = &o.borrow().internal {
+                        items.len()
                     } else {
-                        Vec::new()
+                        0
                     };
-                    for (index, value) in items.into_iter().enumerate() {
+                    for index in 0..initial_len {
+                        let value = {
+                            let object = o.borrow();
+                            if let Internal::Array(items) = &object.internal {
+                                items.get(index).cloned()
+                            } else {
+                                None
+                            }
+                        };
+                        let Some(value) = value else {
+                            continue;
+                        };
                         self.call(
                             callback.clone(),
                             vec![value, Value::Number(index as f64), source_array.clone()],
@@ -1025,6 +1036,18 @@ mod tests {
     fn array_foreach_returns_undefined() {
         let src = "let result = [1].forEach(function(v){ return v + 1; }); result === undefined;";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_foreach_reads_mutated_items_from_source_array() {
+        let src = "let seen=''; let a=[1,2]; a.forEach(function(v,i,arr){ if (i === 0) { arr[1] = 9; } seen = seen + v; }); seen;";
+        assert_eq!(run_source(src).unwrap(), Value::String("19".into()));
+    }
+
+    #[test]
+    fn array_foreach_skips_items_removed_by_length_truncation() {
+        let src = "let seen=''; let a=[1,2,3]; a.forEach(function(v,i,arr){ if (i === 0) { arr.length = 1; } seen = seen + v; }); seen;";
+        assert_eq!(run_source(src).unwrap(), Value::String("1".into()));
     }
 
     #[test]
