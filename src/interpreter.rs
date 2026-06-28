@@ -924,17 +924,22 @@ impl Interpreter {
             "Array.prototype.filter" => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
+                    let source_array = Value::Object(o.clone());
                     let items = if let Internal::Array(items) = &o.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
                     };
                     let mut filtered = Vec::new();
-                    for value in items {
+                    for (index, value) in items.into_iter().enumerate() {
                         if self
                             .call(
                                 callback.clone(),
-                                vec![value.clone()],
+                                vec![
+                                    value.clone(),
+                                    Value::Number(index as f64),
+                                    source_array.clone(),
+                                ],
                                 Value::Object(self.global.clone()),
                                 false,
                             )?
@@ -1029,6 +1034,18 @@ mod tests {
     fn array_filter_returns_empty_array_for_no_matches() {
         let src = "let a=[1,2]; a.filter(function(x){ return x > 5; }).length;";
         assert_eq!(run_source(src).unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn array_filter_passes_index_to_callback() {
+        let src = "let a=[10,20,30]; a.filter(function(_v,i){ return i > 0; }).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("20,30".into()));
+    }
+
+    #[test]
+    fn array_filter_passes_source_array_to_callback() {
+        let src = "let a=[1,2,3]; a.filter(function(v,_i,arr){ return arr.length === 3 && v > 1; }).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("2,3".into()));
     }
 
     #[test]
