@@ -7,12 +7,13 @@ ECMAScript engine.
 ## Supported Syntax
 
 - Literals: number, string, boolean, `null`, and `undefined`
-- Bindings: `let`, `var`, and `const`
+- Bindings: `let`, uninitialized `let`, `var`, and `const`
 - Expressions: arithmetic, comparison, equality, logical, unary, conditional,
   `typeof`, and `instanceof`
 - Assignment: mutable bindings, member assignment, index assignment, compound
   assignment, prefix update, and postfix update
-- Control flow: blocks, `if`, `else`, `while`, `for`, `switch`, and `break`
+- Control flow: blocks, `if`, `else`, `while`, `for`, `switch`, `break`, and
+  `continue`
 - Functions: declarations, expressions, calls, closures, `this`, `new`, and
   `return`
 - Exceptions: `throw`, `try`, `catch`, and `finally`
@@ -28,6 +29,7 @@ ECMAScript engine.
 - Placeholder JSON support: `JSON.stringify`
 - Small prototype surface: `Object.prototype.toString`,
   `Array.prototype.join`, and `Array.prototype.map`
+- Interactive REPL with state preservation, multi-line input, and dot commands
 
 ## Agent Tool Contract
 
@@ -39,10 +41,27 @@ Agent mode returns one JSON object containing:
 - `value_type`
 - `output`
 - `output_truncated`
+- `error_kind`
 - `error`
 
 JavaScript parse and runtime failures are encoded as ordinary JSON results with
 `ok:false`, so agents can handle them without interpreting process failures.
+
+Current `error_kind` values are:
+
+- `lex`
+- `parse`
+- `runtime`
+- `source_limit`
+- `step_limit`
+- `call_depth_limit`
+
+Agent mode applies these default runtime limits:
+
+- Source text: 64 KiB
+- Captured output: 256 lines
+- Interpreter steps: 100,000
+- Nested user-defined function calls: 16 frames
 
 ## Partial Semantics
 
@@ -53,6 +72,7 @@ These features exist but are intentionally incomplete:
 - Standard library behavior
 - Error object behavior and typed exception matching
 - `JSON.stringify`, which currently behaves as a minimal placeholder
+- REPL line editing and history
 
 ## Not Supported
 

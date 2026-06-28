@@ -6,10 +6,11 @@ AI Agent 脚本的轻量级 Runtime，而不是完整 ECMAScript 引擎。
 ## 已支持语法
 
 - 字面量：数字、字符串、布尔值、`null` 和 `undefined`
-- 绑定：`let`、`var` 和 `const`
+- 绑定：`let`、未初始化 `let`、`var` 和 `const`
 - 表达式：算术、比较、相等、逻辑、一元、三元、`typeof` 和 `instanceof`
 - 赋值：可变绑定赋值、成员赋值、下标赋值、复合赋值、前缀更新和后缀更新
-- 控制流：代码块、`if`、`else`、`while`、`for`、`switch` 和 `break`
+- 控制流：代码块、`if`、`else`、`while`、`for`、`switch`、`break` 和
+  `continue`
 - 函数：函数声明、函数表达式、函数调用、闭包、`this`、`new` 和 `return`
 - 异常：`throw`、`try`、`catch` 和 `finally`
 - 数据结构：对象字面量、数组字面量、成员访问、下标访问、数组 `length`
@@ -23,6 +24,7 @@ AI Agent 脚本的轻量级 Runtime，而不是完整 ECMAScript 引擎。
 - 占位 JSON 支持：`JSON.stringify`
 - 小型原型方法面：`Object.prototype.toString`、`Array.prototype.join` 和
   `Array.prototype.map`
+- 交互式 REPL，支持状态保留、多行输入和点命令
 
 ## Agent 工具契约
 
@@ -34,10 +36,27 @@ Agent 模式返回一个 JSON 对象，包含：
 - `value_type`
 - `output`
 - `output_truncated`
+- `error_kind`
 - `error`
 
 JavaScript 解析失败和运行时失败会编码为 `ok:false` 的普通 JSON 结果，Agent
 不需要通过进程失败来判断脚本错误。
+
+当前 `error_kind` 取值包括：
+
+- `lex`
+- `parse`
+- `runtime`
+- `source_limit`
+- `step_limit`
+- `call_depth_limit`
+
+Agent 模式默认应用这些运行限制：
+
+- 源码文本：64 KiB
+- 捕获输出：256 行
+- 解释器执行步数：100,000
+- 嵌套用户函数调用：16 层
 
 ## 部分支持语义
 
@@ -48,6 +67,7 @@ JavaScript 解析失败和运行时失败会编码为 `ok:false` 的普通 JSON 
 - 标准库行为
 - Error 对象行为和带类型异常匹配
 - `JSON.stringify`，当前仍是最小占位实现
+- REPL 行编辑和历史记录
 
 ## 暂不支持
 
