@@ -1,0 +1,79 @@
+# Supported JavaScript Subset
+
+This document describes the JavaScript subset currently targeted by `rjs_lite`.
+The project is a lightweight runtime for short-lived AI agent scripts, not a full
+ECMAScript engine.
+
+## Supported Syntax
+
+- Literals: number, string, boolean, `null`, and `undefined`
+- Bindings: `let`, `var`, and `const`
+- Expressions: arithmetic, comparison, equality, logical, unary, conditional,
+  `typeof`, and `instanceof`
+- Assignment: mutable bindings, member assignment, index assignment, compound
+  assignment, prefix update, and postfix update
+- Control flow: blocks, `if`, `else`, `while`, `for`, `switch`, and `break`
+- Functions: declarations, expressions, calls, closures, `this`, `new`, and
+  `return`
+- Exceptions: `throw`, `try`, `catch`, and `finally`
+- Data structures: object literals, array literals, member access, index access,
+  array `length`, and prototype lookup
+
+## Supported Runtime Surface
+
+- Minimal host function: `print(value)`
+- Basic constructors: `Object`, `Array`, `String`, `Number`, `Boolean`, and
+  common error constructors
+- Basic utilities: `isNaN`
+- Placeholder JSON support: `JSON.stringify`
+- Small prototype surface: `Object.prototype.toString`,
+  `Array.prototype.join`, and `Array.prototype.map`
+
+## Agent Tool Contract
+
+Agent mode returns one JSON object containing:
+
+- `ok`
+- `request_id`
+- `value`
+- `value_type`
+- `output`
+- `output_truncated`
+- `error`
+
+JavaScript parse and runtime failures are encoded as ordinary JSON results with
+`ok:false`, so agents can handle them without interpreting process failures.
+
+## Partial Semantics
+
+These features exist but are intentionally incomplete:
+
+- Object, array, constructor, and prototype semantics
+- JavaScript coercion rules
+- Standard library behavior
+- Error object behavior and typed exception matching
+- `JSON.stringify`, which currently behaves as a minimal placeholder
+
+## Not Supported
+
+- Classes
+- Modules
+- Async functions and promises
+- Generators
+- Regular expressions
+- Symbols
+- BigInt
+- Full strict-mode behavior
+- Browser APIs, DOM APIs, npm packages, file APIs, network APIs, process APIs,
+  and OS APIs
+- JIT, bytecode VM, or advanced optimization pipeline
+
+## Test262 Direction
+
+`run_test262.py` is an optional local exploration runner. It expects an upstream
+`test262/` checkout in the repository root and should be used for subset
+tracking, not for claiming full ECMAScript compatibility.
+
+Future test262 work should use a maintained subset list, record pass/fail
+categories, and clearly distinguish supported-syntax failures from unsupported
+feature failures.

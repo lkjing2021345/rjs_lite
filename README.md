@@ -113,6 +113,8 @@ println!("{}", result.to_json());
 
 See `docs/agent-tool.md` for the full tool contract.
 
+See `docs/language-subset.md` for the supported JavaScript subset.
+
 ## Contest Alignment
 
 Function completeness path:
