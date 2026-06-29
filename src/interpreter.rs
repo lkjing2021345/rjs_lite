@@ -138,6 +138,10 @@ impl Interpreter {
                 "toString".into(),
                 self.native_method("Object.prototype.toString"),
             );
+            self.object_proto.borrow_mut().props.insert(
+                "hasOwnProperty".into(),
+                self.native_method("Object.prototype.hasOwnProperty"),
+            );
         }
         if let Some(Value::Object(array_ctor)) = self.env.borrow().get("Array") {
             array_ctor
@@ -872,6 +876,25 @@ impl Interpreter {
                     _ => "Object",
                 }
             ))),
+            "Object.prototype.hasOwnProperty" => {
+                let key = args
+                    .first()
+                    .cloned()
+                    .unwrap_or(Value::Undefined)
+                    .to_string();
+                let Value::Object(object) = this_value else {
+                    return Ok(Value::Bool(false));
+                };
+                let object = object.borrow();
+                let has_array_index = if let Internal::Array(items) = &object.internal {
+                    key.parse::<usize>().is_ok_and(|index| index < items.len()) || key == "length"
+                } else {
+                    false
+                };
+                Ok(Value::Bool(
+                    has_array_index || object.props.contains_key(&key),
+                ))
+            }
             "Array.prototype.join" => {
                 let sep = args
                     .first()
@@ -982,6 +1005,30 @@ mod tests {
     #[test]
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn has_own_property_detects_own_object_property() {
+        let src = "let o={a:1}; o.hasOwnProperty('a');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn has_own_property_ignores_prototype_property() {
+        let src = "let o={}; o.hasOwnProperty('toString');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn has_own_property_detects_array_index_and_length() {
+        let src = "let a=[10]; a.hasOwnProperty('0') && a.hasOwnProperty('length');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn has_own_property_detects_array_named_property() {
+        let src = "let a=[]; a.extra=1; a.hasOwnProperty('extra');";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 
