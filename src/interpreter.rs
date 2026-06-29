@@ -444,7 +444,8 @@ impl Interpreter {
                     .iter()
                     .map(|e| self.eval_expr(e))
                     .collect::<JsResult<Vec<_>>>()?;
-                let obj = Object::with_internal(Internal::Array(values));
+                let obj =
+                    Object::with_internal(Internal::Array(values.into_iter().map(Some).collect()));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
@@ -648,7 +649,7 @@ impl Interpreter {
                 return Value::Number(items.len() as f64);
             }
             if let Ok(i) = property.parse::<usize>() {
-                return items.get(i).cloned().unwrap_or(Value::Undefined);
+                return items.get(i).cloned().flatten().unwrap_or(Value::Undefined);
             }
         }
         Object::lookup(object, property).unwrap_or(Value::Undefined)
@@ -659,15 +660,15 @@ impl Interpreter {
             if property == "length" {
                 let n = value.to_number();
                 if n.is_finite() && n >= 0.0 && n.fract() == 0.0 {
-                    items.resize(n as usize, Value::Undefined);
+                    items.resize(n as usize, None);
                 }
                 return;
             }
             if let Ok(i) = property.parse::<usize>() {
                 if i >= items.len() {
-                    items.resize(i + 1, Value::Undefined);
+                    items.resize(i + 1, None);
                 }
-                items[i] = value;
+                items[i] = Some(value);
                 return;
             }
         }
@@ -831,7 +832,8 @@ impl Interpreter {
                 }
             }
             "Array" => {
-                let obj = Object::with_internal(Internal::Array(args));
+                let obj =
+                    Object::with_internal(Internal::Array(args.into_iter().map(Some).collect()));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
@@ -887,7 +889,9 @@ impl Interpreter {
                 };
                 let object = object.borrow();
                 let has_array_index = if let Internal::Array(items) = &object.internal {
-                    key.parse::<usize>().is_ok_and(|index| index < items.len()) || key == "length"
+                    key.parse::<usize>()
+                        .is_ok_and(|index| items.get(index).is_some_and(Option::is_some))
+                        || key == "length"
                 } else {
                     false
                 };
@@ -906,7 +910,7 @@ impl Interpreter {
                     return Ok(Value::String(
                         items
                             .iter()
-                            .map(|v| v.to_string())
+                            .map(|v| v.clone().unwrap_or(Value::Undefined).to_string())
                             .collect::<Vec<_>>()
                             .join(&sep),
                     ));
@@ -926,13 +930,15 @@ impl Interpreter {
                         .map(|v| {
                             self.call(
                                 callback.clone(),
-                                vec![v],
+                                vec![v.unwrap_or(Value::Undefined)],
                                 Value::Object(self.global.clone()),
                                 false,
                             )
                         })
                         .collect::<JsResult<Vec<_>>>()?;
-                    let obj = Object::with_internal(Internal::Array(mapped));
+                    let obj = Object::with_internal(Internal::Array(
+                        mapped.into_iter().map(Some).collect(),
+                    ));
                     obj.borrow_mut().proto = Some(self.array_proto.clone());
                     return Ok(Value::Object(obj));
                 }
@@ -1023,6 +1029,18 @@ mod tests {
     #[test]
     fn has_own_property_detects_array_index_and_length() {
         let src = "let a=[10]; a.hasOwnProperty('0') && a.hasOwnProperty('length');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn has_own_property_does_not_report_length_created_array_holes() {
+        let src = "let a=[]; a.length=2; a.hasOwnProperty('0');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn has_own_property_does_not_report_skipped_array_indices() {
+        let src = "let a=[]; a[2]=1; (!a.hasOwnProperty('1')) && a.hasOwnProperty('2');";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 
