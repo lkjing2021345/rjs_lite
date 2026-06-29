@@ -969,7 +969,8 @@ impl Interpreter {
                         "Object.defineProperty expects descriptor object",
                     ));
                 };
-                if let Some(value) = descriptor.borrow().props.get("value").cloned() {
+                let value = descriptor.borrow().props.get("value").cloned();
+                if let Some(value) = value {
                     self.set_property(&target, &key, value);
                 }
                 Ok(Value::Object(target))
@@ -1334,6 +1335,12 @@ mod tests {
     fn object_define_property_sets_array_index() {
         let src = "let a=[]; Object.defineProperty(a, '1', {value: 7}); a.length + ':' + a[1];";
         assert_eq!(run_source(src).unwrap(), Value::String("2:7".into()));
+    }
+
+    #[test]
+    fn object_define_property_allows_descriptor_to_alias_target() {
+        let src = "let o={value:1}; Object.defineProperty(o, 'x', o); o.x;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(1.0));
     }
 
     #[test]
