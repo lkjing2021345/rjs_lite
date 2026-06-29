@@ -22,10 +22,12 @@ pub struct Object {
     pub internal: Internal,
 }
 
+pub type ArraySlot = Option<Value>;
+
 #[derive(Clone)]
 pub enum Internal {
     Plain,
-    Array(Vec<Value>),
+    Array(Vec<ArraySlot>),
     Function {
         params: Vec<String>,
         body: Vec<Stmt>,
@@ -71,7 +73,9 @@ pub struct Function {
 
 impl Value {
     pub fn array(items: Vec<Value>) -> Value {
-        Value::Object(Object::with_internal(Internal::Array(items)))
+        Value::Object(Object::with_internal(Internal::Array(
+            items.into_iter().map(Some).collect(),
+        )))
     }
 
     pub fn function(params: Vec<String>, body: Vec<Stmt>) -> Value {
@@ -170,8 +174,8 @@ impl fmt::Display for Value {
                         let parts: Vec<String> = items
                             .iter()
                             .map(|v| match v {
-                                Value::Null | Value::Undefined => String::new(),
-                                other => other.to_string(),
+                                Some(Value::Null | Value::Undefined) | None => String::new(),
+                                Some(other) => other.to_string(),
                             })
                             .collect();
                         write!(f, "{}", parts.join(","))

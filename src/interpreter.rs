@@ -537,7 +537,8 @@ impl Interpreter {
                     .iter()
                     .map(|e| self.eval_expr(e))
                     .collect::<JsResult<Vec<_>>>()?;
-                let obj = Object::with_internal(Internal::Array(values));
+                let obj =
+                    Object::with_internal(Internal::Array(values.into_iter().map(Some).collect()));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
@@ -741,7 +742,7 @@ impl Interpreter {
                 return Value::Number(items.len() as f64);
             }
             if let Ok(i) = property.parse::<usize>() {
-                return items.get(i).cloned().unwrap_or(Value::Undefined);
+                return items.get(i).cloned().flatten().unwrap_or(Value::Undefined);
             }
         }
         Object::lookup(object, property).unwrap_or(Value::Undefined)
@@ -752,15 +753,15 @@ impl Interpreter {
             if property == "length" {
                 let n = value.to_number();
                 if n.is_finite() && n >= 0.0 && n.fract() == 0.0 {
-                    items.resize(n as usize, Value::Undefined);
+                    items.resize(n as usize, None);
                 }
                 return;
             }
             if let Ok(i) = property.parse::<usize>() {
                 if i >= items.len() {
-                    items.resize(i + 1, Value::Undefined);
+                    items.resize(i + 1, None);
                 }
-                items[i] = value;
+                items[i] = Some(value);
                 return;
             }
         }
@@ -933,7 +934,13 @@ impl Interpreter {
                 let object = object.borrow();
                 let mut keys = Vec::new();
                 if let Internal::Array(items) = &object.internal {
-                    keys.extend((0..items.len()).map(|index| index.to_string()));
+                    keys.extend(
+                        items
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, value)| value.is_some())
+                            .map(|(index, _)| index.to_string()),
+                    );
                 }
                 let mut named_keys = object.props.keys().cloned().collect::<Vec<_>>();
                 named_keys.sort();
@@ -942,13 +949,15 @@ impl Interpreter {
                         keys.push(key);
                     }
                 }
-                let values = keys.into_iter().map(Value::String).collect();
-                let obj = Object::with_internal(Internal::Array(values));
+                let values: Vec<Value> = keys.into_iter().map(Value::String).collect();
+                let obj =
+                    Object::with_internal(Internal::Array(values.into_iter().map(Some).collect()));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
             "Array" => {
-                let obj = Object::with_internal(Internal::Array(args));
+                let obj =
+                    Object::with_internal(Internal::Array(args.into_iter().map(Some).collect()));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
@@ -991,7 +1000,7 @@ impl Interpreter {
                 let mut values = Vec::new();
                 let is_array = matches!(&object.internal, Internal::Array(_));
                 if let Internal::Array(items) = &object.internal {
-                    values.extend(items.iter().cloned());
+                    values.extend(items.iter().filter_map(Clone::clone));
                 }
                 let mut named_keys = object.props.keys().cloned().collect::<Vec<_>>();
                 named_keys.sort();
@@ -1002,7 +1011,8 @@ impl Interpreter {
                         values.push(value.clone());
                     }
                 }
-                let obj = Object::with_internal(Internal::Array(values));
+                let obj =
+                    Object::with_internal(Internal::Array(values.into_iter().map(Some).collect()));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
@@ -1027,7 +1037,9 @@ impl Interpreter {
                 };
                 let object = object.borrow();
                 let has_array_index = if let Internal::Array(items) = &object.internal {
-                    key.parse::<usize>().is_ok_and(|index| index < items.len()) || key == "length"
+                    key.parse::<usize>()
+                        .is_ok_and(|index| items.get(index).is_some_and(Option::is_some))
+                        || key == "length"
                 } else {
                     false
                 };
@@ -1046,7 +1058,7 @@ impl Interpreter {
                     return Ok(Value::String(
                         items
                             .iter()
-                            .map(|v| v.to_string())
+                            .map(|v| v.clone().unwrap_or(Value::Undefined).to_string())
                             .collect::<Vec<_>>()
                             .join(&sep),
                     ));
@@ -1057,7 +1069,7 @@ impl Interpreter {
                 if let Value::Object(o) = this_value
                     && let Internal::Array(items) = &mut o.borrow_mut().internal
                 {
-                    items.extend(args);
+                    items.extend(args.into_iter().map(Some));
                     return Ok(Value::Number(items.len() as f64));
                 }
                 Ok(Value::Number(0.0))
@@ -1077,13 +1089,19 @@ impl Interpreter {
                         .map(|(index, value)| {
                             self.call(
                                 callback.clone(),
-                                vec![value, Value::Number(index as f64), source_array.clone()],
+                                vec![
+                                    value.unwrap_or(Value::Undefined),
+                                    Value::Number(index as f64),
+                                    source_array.clone(),
+                                ],
                                 Value::Object(self.global.clone()),
                                 false,
                             )
                         })
                         .collect::<JsResult<Vec<_>>>()?;
-                    let obj = Object::with_internal(Internal::Array(mapped));
+                    let obj = Object::with_internal(Internal::Array(
+                        mapped.into_iter().map(Some).collect(),
+                    ));
                     obj.borrow_mut().proto = Some(self.array_proto.clone());
                     return Ok(Value::Object(obj));
                 }
@@ -1102,11 +1120,12 @@ impl Interpreter {
                     };
                     let mut filtered = Vec::new();
                     for (index, value) in items.into_iter().enumerate() {
+                        let callback_value = value.clone().unwrap_or(Value::Undefined);
                         if self
                             .call(
                                 callback.clone(),
                                 vec![
-                                    value.clone(),
+                                    callback_value,
                                     Value::Number(index as f64),
                                     source_array.clone(),
                                 ],
@@ -1139,7 +1158,7 @@ impl Interpreter {
                         let value = {
                             let object = o.borrow();
                             if let Internal::Array(items) = &object.internal {
-                                items.get(index).cloned()
+                                items.get(index).cloned().flatten()
                             } else {
                                 None
                             }
@@ -1307,6 +1326,18 @@ mod tests {
     #[test]
     fn has_own_property_detects_array_index_and_length() {
         let src = "let a=[10]; a.hasOwnProperty('0') && a.hasOwnProperty('length');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn has_own_property_does_not_report_length_created_array_holes() {
+        let src = "let a=[]; a.length=2; a.hasOwnProperty('0');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn has_own_property_does_not_report_skipped_array_indices() {
+        let src = "let a=[]; a[2]=1; (!a.hasOwnProperty('1')) && a.hasOwnProperty('2');";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 
