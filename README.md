@@ -18,7 +18,7 @@ Currently supported:
 - Function declarations, function expressions, calls, closures, `this`, `new`, and `return`
 - Basic object and array literals, member access, index access, array `length`, and prototype lookup
 - Basic `throw`, `try`, `catch`, and `finally`
-- Minimal builtins: `print(value)`, `Object`, `Array`, `String`, `Number`, `Boolean`, `isNaN`, a placeholder `JSON.stringify`, and basic error constructors
+- Minimal builtins: `print(value)`, `Object`, `Object.values`, `Array`, `String`, `Number`, `Boolean`, `isNaN`, a placeholder `JSON.stringify`, and basic error constructors
 - A small prototype surface, including `Object.prototype.toString`, `Array.prototype.join`, and `Array.prototype.map`
 - CLI execution from inline source or a `.js` file
 - Agent tool mode with structured JSON result output

@@ -27,7 +27,7 @@
 - 函数声明、函数表达式、函数调用、闭包、`this`、`new` 和 `return`
 - 基础对象和数组字面量、成员访问、下标访问、数组 `length` 和原型查找
 - 基础 `throw`、`try`、`catch` 和 `finally`
-- 最小内置能力：`print(value)`、`Object`、`Array`、`String`、`Number`、`Boolean`、`isNaN`、占位版 `JSON.stringify` 和基础错误构造器
+- 最小内置能力：`print(value)`、`Object`、`Object.values`、`Array`、`String`、`Number`、`Boolean`、`isNaN`、占位版 `JSON.stringify` 和基础错误构造器
 - 小型原型方法面：`Object.prototype.toString`、`Array.prototype.join` 和 `Array.prototype.map`
 - CLI 执行内联源码或 `.js` 文件
 - `--agent-eval` Agent 工具模式，输出结构化 JSON 结果
