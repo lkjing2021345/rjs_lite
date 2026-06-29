@@ -187,6 +187,10 @@ impl Interpreter {
                 .borrow_mut()
                 .props
                 .insert("values".into(), self.native_method("Object.values"));
+            object_ctor.borrow_mut().props.insert(
+                "defineProperty".into(),
+                self.native_method("Object.defineProperty"),
+            );
             self.object_proto.borrow_mut().props.insert(
                 "toString".into(),
                 self.native_method("Object.prototype.toString"),
@@ -955,6 +959,21 @@ impl Interpreter {
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
+            "Object.defineProperty" => {
+                let Some(Value::Object(target)) = args.first().cloned() else {
+                    return Err(JsError::runtime("Object.defineProperty expects object"));
+                };
+                let key = args.get(1).cloned().unwrap_or(Value::Undefined).to_string();
+                let Some(Value::Object(descriptor)) = args.get(2).cloned() else {
+                    return Err(JsError::runtime(
+                        "Object.defineProperty expects descriptor object",
+                    ));
+                };
+                if let Some(value) = descriptor.borrow().props.get("value").cloned() {
+                    self.set_property(&target, &key, value);
+                }
+                Ok(Value::Object(target))
+            }
             "Array" => {
                 let obj =
                     Object::with_internal(Internal::Array(args.into_iter().map(Some).collect()));
@@ -1297,6 +1316,24 @@ mod tests {
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_define_property_sets_value_descriptor() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 3}); o.a;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(3.0));
+    }
+
+    #[test]
+    fn object_define_property_returns_target_object() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 1}) === o;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_define_property_sets_array_index() {
+        let src = "let a=[]; Object.defineProperty(a, '1', {value: 7}); a.length + ':' + a[1];";
+        assert_eq!(run_source(src).unwrap(), Value::String("2:7".into()));
     }
 
     #[test]
