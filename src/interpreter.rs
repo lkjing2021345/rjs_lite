@@ -985,13 +985,14 @@ impl Interpreter {
                 };
                 let object = object.borrow();
                 let mut values = Vec::new();
+                let is_array = matches!(&object.internal, Internal::Array(_));
                 if let Internal::Array(items) = &object.internal {
                     values.extend(items.iter().cloned());
                 }
                 let mut named_keys = object.props.keys().cloned().collect::<Vec<_>>();
                 named_keys.sort();
                 for key in named_keys {
-                    if key.parse::<usize>().is_err()
+                    if (!is_array || key.parse::<usize>().is_err())
                         && let Some(value) = object.props.get(&key)
                     {
                         values.push(value.clone());
@@ -1496,6 +1497,18 @@ mod tests {
     fn object_values_returns_values_in_sorted_key_order() {
         let src = "let o={b:2,a:1}; Object.values(o).join(',');";
         assert_eq!(run_source(src).unwrap(), Value::String("1,2".into()));
+    }
+
+    #[test]
+    fn object_values_includes_numeric_keys_on_plain_objects() {
+        let src = "let o={0:'zero',a:'A'}; Object.values(o).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("zero,A".into()));
+    }
+
+    #[test]
+    fn object_values_includes_numeric_keys_assigned_to_plain_objects() {
+        let src = "let o={a:'A'}; o[0]='zero'; Object.values(o).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("zero,A".into()));
     }
 
     #[test]
