@@ -26,7 +26,7 @@ ECMAScript engine.
 - Basic constructors: `Object`, `Array`, `String`, `Number`, `Boolean`, and
   common error constructors
 - Basic utilities: `isNaN`
-- Object utility: `Object.keys`
+- Object utilities: `Object.keys` and `Object.values`
 - Placeholder JSON support: `JSON.stringify`
 - Small prototype surface: `Object.prototype.toString`,
   `Array.prototype.join`, `Array.prototype.map`, `Array.prototype.filter`,

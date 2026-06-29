@@ -183,6 +183,10 @@ impl Interpreter {
                 .borrow_mut()
                 .props
                 .insert("keys".into(), self.native_method("Object.keys"));
+            object_ctor
+                .borrow_mut()
+                .props
+                .insert("values".into(), self.native_method("Object.values"));
             self.object_proto.borrow_mut().props.insert(
                 "toString".into(),
                 self.native_method("Object.prototype.toString"),
@@ -975,6 +979,28 @@ impl Interpreter {
                     .unwrap_or(Value::Undefined)
                     .to_string(),
             )),
+            "Object.values" => {
+                let Some(Value::Object(object)) = args.first().cloned() else {
+                    return Err(JsError::runtime("Object.values expects object"));
+                };
+                let object = object.borrow();
+                let mut values = Vec::new();
+                if let Internal::Array(items) = &object.internal {
+                    values.extend(items.iter().cloned());
+                }
+                let mut named_keys = object.props.keys().cloned().collect::<Vec<_>>();
+                named_keys.sort();
+                for key in named_keys {
+                    if key.parse::<usize>().is_err()
+                        && let Some(value) = object.props.get(&key)
+                    {
+                        values.push(value.clone());
+                    }
+                }
+                let obj = Object::with_internal(Internal::Array(values));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
+            }
             "Object.prototype.toString" => Ok(Value::String(format!(
                 "[object {}]",
                 match this_value.type_name() {
@@ -1460,6 +1486,27 @@ mod tests {
     #[test]
     fn object_keys_orders_array_indices_numerically() {
         let src = "let a=[0,1,2,3,4,5,6,7,8,9,10,11]; Object.keys(a).join(',');";
+        assert_eq!(
+            run_source(src).unwrap(),
+            Value::String("0,1,2,3,4,5,6,7,8,9,10,11".into())
+        );
+    }
+
+    #[test]
+    fn object_values_returns_values_in_sorted_key_order() {
+        let src = "let o={b:2,a:1}; Object.values(o).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("1,2".into()));
+    }
+
+    #[test]
+    fn object_values_includes_array_indices_then_named_values() {
+        let src = "let a=[10,20]; a.extra=30; Object.values(a).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("10,20,30".into()));
+    }
+
+    #[test]
+    fn object_values_orders_array_indices_numerically() {
+        let src = "let a=[0,1,2,3,4,5,6,7,8,9,10,11]; Object.values(a).join(',');";
         assert_eq!(
             run_source(src).unwrap(),
             Value::String("0,1,2,3,4,5,6,7,8,9,10,11".into())
