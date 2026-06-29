@@ -29,8 +29,9 @@ ECMAScript engine.
 - Object utilities: `Object.keys` and `Object.values`
 - Placeholder JSON support: `JSON.stringify`
 - Small prototype surface: `Object.prototype.toString`,
-  `Array.prototype.join`, `Array.prototype.map`, `Array.prototype.filter`,
-  `Array.prototype.forEach`, and `Array.prototype.push`
+  `Object.prototype.hasOwnProperty`, `Array.prototype.join`,
+  `Array.prototype.map`, `Array.prototype.filter`, `Array.prototype.forEach`,
+  and `Array.prototype.push`
 - `Array.prototype.map`, `Array.prototype.filter`, and
   `Array.prototype.forEach` callbacks receive the current value, zero-based
   index, and source array
