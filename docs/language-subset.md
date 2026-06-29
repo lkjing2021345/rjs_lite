@@ -26,8 +26,8 @@ ECMAScript engine.
 - Basic constructors: `Object`, `Array`, `String`, `Number`, `Boolean`, and
   common error constructors
 - Basic utilities: `isNaN`
-- Object utilities: `Object.defineProperty`, `Object.keys`, and
-  `Object.values`
+- Object utilities: `Object.defineProperty`,
+  `Object.getOwnPropertyDescriptor`, `Object.keys`, and `Object.values`
 - Placeholder JSON support: `JSON.stringify`
 - Small prototype surface: `Object.prototype.toString`,
   `Object.prototype.hasOwnProperty`, `Array.prototype.join`,
@@ -74,7 +74,9 @@ Agent mode applies these default runtime limits:
 
 These features exist but are intentionally incomplete:
 
-- Object, array, constructor, and prototype semantics
+- Object, array, constructor, prototype, and property descriptor semantics
+- Array holes are represented distinctly from explicit `undefined`, but full
+  sparse-array behavior is still incomplete
 - JavaScript coercion rules
 - Standard library behavior
 - Error object behavior and typed exception matching

@@ -191,6 +191,10 @@ impl Interpreter {
                 "defineProperty".into(),
                 self.native_method("Object.defineProperty"),
             );
+            object_ctor.borrow_mut().props.insert(
+                "getOwnPropertyDescriptor".into(),
+                self.native_method("Object.getOwnPropertyDescriptor"),
+            );
             self.object_proto.borrow_mut().props.insert(
                 "toString".into(),
                 self.native_method("Object.prototype.toString"),
@@ -775,6 +779,54 @@ impl Interpreter {
             .insert(property.to_string(), value);
     }
 
+    fn data_descriptor(
+        &self,
+        value: Value,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> Value {
+        let descriptor = Object::plain();
+        descriptor.borrow_mut().proto = Some(self.object_proto.clone());
+        descriptor.borrow_mut().props.insert("value".into(), value);
+        descriptor
+            .borrow_mut()
+            .props
+            .insert("writable".into(), Value::Bool(writable));
+        descriptor
+            .borrow_mut()
+            .props
+            .insert("enumerable".into(), Value::Bool(enumerable));
+        descriptor
+            .borrow_mut()
+            .props
+            .insert("configurable".into(), Value::Bool(configurable));
+        Value::Object(descriptor)
+    }
+
+    fn get_own_property_descriptor(&self, object: &ObjectRef, property: &str) -> Value {
+        let object = object.borrow();
+        if let Internal::Array(items) = &object.internal {
+            if property == "length" {
+                return self.data_descriptor(Value::Number(items.len() as f64), true, false, false);
+            }
+            if let Ok(index) = property.parse::<usize>() {
+                return items
+                    .get(index)
+                    .cloned()
+                    .flatten()
+                    .map(|value| self.data_descriptor(value, true, true, true))
+                    .unwrap_or(Value::Undefined);
+            }
+        }
+        object
+            .props
+            .get(property)
+            .cloned()
+            .map(|value| self.data_descriptor(value, true, true, true))
+            .unwrap_or(Value::Undefined)
+    }
+
     fn binary(&self, left: Value, op: BinaryOp, right: Value) -> JsResult<Value> {
         match op {
             BinaryOp::Add => match (left, right) {
@@ -974,6 +1026,15 @@ impl Interpreter {
                     self.set_property(&target, &key, value);
                 }
                 Ok(Value::Object(target))
+            }
+            "Object.getOwnPropertyDescriptor" => {
+                let Some(Value::Object(object)) = args.first().cloned() else {
+                    return Err(JsError::runtime(
+                        "Object.getOwnPropertyDescriptor expects object",
+                    ));
+                };
+                let property = args.get(1).cloned().unwrap_or(Value::Undefined).to_string();
+                Ok(self.get_own_property_descriptor(&object, &property))
             }
             "Array" => {
                 let obj =
@@ -1341,6 +1402,61 @@ mod tests {
     fn object_define_property_allows_descriptor_to_alias_target() {
         let src = "let o={value:1}; Object.defineProperty(o, 'x', o); o.x;";
         assert_eq!(run_source(src).unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_returns_data_descriptor() {
+        let src = "let d=Object.getOwnPropertyDescriptor({a:3}, 'a'); d.value + ':' + d.writable + ':' + d.enumerable + ':' + d.configurable;";
+        assert_eq!(
+            run_source(src).unwrap(),
+            Value::String("3:true:true:true".into())
+        );
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_reads_define_property_value() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 3}); let d=Object.getOwnPropertyDescriptor(o, 'a'); d.value;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(3.0));
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_ignores_prototype_properties() {
+        let src = "let o={}; Object.getOwnPropertyDescriptor(o, 'toString') === undefined;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_describes_array_index() {
+        let src =
+            "let d=Object.getOwnPropertyDescriptor([10,20], '1'); d.value + ':' + d.enumerable;";
+        assert_eq!(run_source(src).unwrap(), Value::String("20:true".into()));
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_describes_array_length() {
+        let src = "let d=Object.getOwnPropertyDescriptor([10,20], 'length'); d.value + ':' + d.enumerable + ':' + d.configurable;";
+        assert_eq!(
+            run_source(src).unwrap(),
+            Value::String("2:false:false".into())
+        );
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_ignores_length_created_array_holes() {
+        let src = "let a=[]; a.length=2; Object.getOwnPropertyDescriptor(a, '0') === undefined;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_ignores_skipped_array_indices() {
+        let src = "let a=[]; a[2]=1; Object.getOwnPropertyDescriptor(a, '1') === undefined;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_get_own_property_descriptor_describes_explicit_undefined_array_value() {
+        let src = "let a=[]; a[0]=undefined; let d=Object.getOwnPropertyDescriptor(a, '0'); d !== undefined && d.value === undefined;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 
     #[test]

@@ -28,7 +28,7 @@
 - 对象与数组字面量、成员/下标访问、属性赋值、数组 `length` 和原型查找
 - `throw`、`try`、`catch` 和 `finally`
 - 最小宿主内置函数：`print(value)`
-- 小型标准能力：`Object`、`Object.defineProperty`、`Object.keys`、`Object.values`、`Array`、`String`、`Number`、`Boolean`、`Error` 构造函数、`isNaN`、占位版 `JSON.stringify`、`Object.prototype.toString`、`Object.prototype.hasOwnProperty`、`Array.prototype.map`、`Array.prototype.filter`、`Array.prototype.forEach`、`Array.prototype.join` 和 `Array.prototype.push`
+- 小型标准能力：`Object`、`Object.defineProperty`、`Object.getOwnPropertyDescriptor`、`Object.keys`、`Object.values`、`Array`、`String`、`Number`、`Boolean`、`Error` 构造函数、`isNaN`、占位版 `JSON.stringify`、`Object.prototype.toString`、`Object.prototype.hasOwnProperty`、`Array.prototype.map`、`Array.prototype.filter`、`Array.prototype.forEach`、`Array.prototype.join` 和 `Array.prototype.push`
 - 交互式 REPL，支持多行输入、状态保留和内置命令
 - CLI 执行内联源码或 `.js` 文件
 - `--agent-eval` Agent 工具模式，输出结构化 JSON 结果、稳定 `error_kind`、源码大小限制、输出行数限制、执行步数限制和调用深度限制
@@ -38,7 +38,7 @@
 
 暂不支持：
 
-- 完整对象、数组、属性描述符、原型链和标准库语义
+- 完整对象、数组、属性描述符元数据、原型链和标准库语义
 - class、module、async、generator、promise、regexp、symbol、BigInt
 - 完整 JS 类型隐式转换规则
 - 完整严格模式行为

@@ -21,7 +21,8 @@ AI Agent 脚本的轻量级 Runtime，而不是完整 ECMAScript 引擎。
 - 最小宿主函数：`print(value)`
 - 基础构造器：`Object`、`Array`、`String`、`Number`、`Boolean` 和常见错误构造器
 - 基础工具：`isNaN`
-- 对象工具：`Object.defineProperty`、`Object.keys` 和 `Object.values`
+- 对象工具：`Object.defineProperty`、`Object.getOwnPropertyDescriptor`、
+  `Object.keys` 和 `Object.values`
 - 占位 JSON 支持：`JSON.stringify`
 - 小型原型方法面：`Object.prototype.toString`、
   `Object.prototype.hasOwnProperty`、`Array.prototype.join` 和
@@ -67,7 +68,8 @@ Agent 模式默认应用这些运行限制：
 
 以下能力已经存在，但仍是不完整实现：
 
-- 对象、数组、构造器和原型语义
+- 对象、数组、构造器、原型和属性描述符语义
+- 数组 holes 已经和显式 `undefined` 区分表示，但完整稀疏数组行为仍不完整
 - JavaScript 隐式类型转换规则
 - 标准库行为
 - Error 对象行为和带类型异常匹配
