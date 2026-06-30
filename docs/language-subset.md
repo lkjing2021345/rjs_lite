@@ -117,3 +117,7 @@ before each run so the runner does not execute stale parser or lexer behavior.
 Future test262 work should use a maintained subset list, record pass/fail
 categories, and clearly distinguish supported-syntax failures from unsupported
 feature failures.
+
+# Appendix
+- Demo video link: https://pan.baidu.com/s/1pnkxA2kUiemy8G6XnHSrWA?pwd=3784
+- [View technical documentation]()

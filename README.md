@@ -193,3 +193,7 @@ cargo clippy -- -D warnings
 ## Upload Notes
 
 The repository is ready for Gitee upload after verification. Keep `Cargo.lock` committed because this is a binary application. Do not upload `target/`, IDE metadata, logs, or local temp files.
+
+# Appendix
+- Demo video link: https://pan.baidu.com/s/1pnkxA2kUiemy8G6XnHSrWA?pwd=3784
+- [View technical documentation](docs/language-subset.md)

@@ -252,3 +252,8 @@ cargo clippy -- -D warnings
 ## 当前阶段说明
 
 当前版本已经能作为比赛项目的 MVP 工程提交，但还不是完整 ECMAScript 引擎。后续开发重点应放在 Agent 资源限制、HostFunction 注册、test262 子集推进、对象模型、标准库、性能基准和字节码执行层。
+
+# 附录
+
+- 演示视频链接：https://pan.baidu.com/s/1pnkxA2kUiemy8G6XnHSrWA?pwd=3784
+- [技术文档查看](docs/language-subset-zh-cn.md)
