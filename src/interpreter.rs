@@ -266,6 +266,11 @@ impl Interpreter {
                 "push",
                 self.native_method("Array.prototype.push"),
             );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "slice",
+                self.native_method("Array.prototype.slice"),
+            );
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
             Self::define_non_enumerable(&string_ctor, "prototype", Value::Object(Object::plain()));
@@ -320,6 +325,18 @@ impl Interpreter {
             (Value::Number(a), Value::Number(b)) => a == b || (a.is_nan() && b.is_nan()),
             _ => left == right,
         }
+    }
+
+    fn array_slice_bound(value: f64, len: isize) -> isize {
+        if value.is_nan() {
+            return 0;
+        }
+        let index = if value < 0.0 {
+            len + value as isize
+        } else {
+            value as isize
+        };
+        index.clamp(0, len)
     }
 
     pub fn run(&mut self, program: &Program) -> JsResult<Value> {
@@ -1313,6 +1330,35 @@ impl Interpreter {
                 }
                 Ok(Value::Number(0.0))
             }
+            "Array.prototype.slice" => {
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    let len = items.len() as isize;
+                    let start = args
+                        .first()
+                        .cloned()
+                        .unwrap_or(Value::Number(0.0))
+                        .to_number();
+                    let end = match args.get(1) {
+                        Some(Value::Undefined) | None => len as f64,
+                        Some(value) => value.to_number(),
+                    };
+                    let start = Self::array_slice_bound(start, len);
+                    let end = Self::array_slice_bound(end, len);
+                    let selected = if end <= start {
+                        Vec::new()
+                    } else {
+                        items[start as usize..end as usize].to_vec()
+                    };
+                    let obj = Object::with_internal(Internal::Array(selected));
+                    obj.borrow_mut().proto = Some(self.array_proto.clone());
+                    return Ok(Value::Object(obj));
+                }
+                let obj = Object::with_internal(Internal::Array(Vec::new()));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
+            }
             "Array.prototype.map" => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
@@ -1631,6 +1677,54 @@ mod tests {
     #[test]
     fn array_includes_is_not_enumerable() {
         let src = "Array.prototype.propertyIsEnumerable('includes');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn array_slice_copies_all_items_without_arguments() {
+        let src = "[1,2,3].slice().join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("1,2,3".into()));
+    }
+
+    #[test]
+    fn array_slice_uses_start_and_end() {
+        let src = "[1,2,3,4].slice(1,3).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("2,3".into()));
+    }
+
+    #[test]
+    fn array_slice_treats_explicit_undefined_end_as_length() {
+        let src = "[1,2,3].slice(1, undefined).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("2,3".into()));
+    }
+
+    #[test]
+    fn array_slice_uses_negative_bounds() {
+        let src = "[1,2,3,4].slice(-3,-1).join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("2,3".into()));
+    }
+
+    #[test]
+    fn array_slice_returns_empty_array_for_reversed_range() {
+        let src = "[1,2,3].slice(2,1).length;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn array_slice_does_not_mutate_source_array() {
+        let src = "let a=[1,2,3]; let b=a.slice(1); b[0]=9; a.join(',') + ':' + b.join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("1,2,3:9,3".into()));
+    }
+
+    #[test]
+    fn array_slice_preserves_holes() {
+        let src = "let a=[]; a.length=2; let b=a.slice(); b.hasOwnProperty('0') || b.hasOwnProperty('1');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn array_slice_is_not_enumerable() {
+        let src = "Array.prototype.propertyIsEnumerable('slice');";
         assert_eq!(run_source(src).unwrap(), Value::Bool(false));
     }
 

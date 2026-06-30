@@ -29,7 +29,7 @@ AI Agent 脚本的轻量级 Runtime，而不是完整 ECMAScript 引擎。
 - 小型原型方法面：`Object.prototype.toString`、
   `Object.prototype.hasOwnProperty`、
   `Object.prototype.propertyIsEnumerable`、`Array.prototype.indexOf`、
-  `Array.prototype.includes`、`Array.prototype.join` 和
+  `Array.prototype.includes`、`Array.prototype.slice`、`Array.prototype.join` 和
   `Array.prototype.map`、`Array.prototype.filter`、`Array.prototype.forEach`、
   `Array.prototype.push`
 - `Array.prototype.map`、`Array.prototype.filter` 和
