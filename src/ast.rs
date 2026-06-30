@@ -42,6 +42,11 @@ pub enum Stmt {
         update: Option<Expr>,
         body: Vec<Stmt>,
     },
+    ForIn {
+        left: Box<Expr>,
+        right: Expr,
+        body: Vec<Stmt>,
+    },
     Switch {
         discriminant: Expr,
         cases: Vec<(Expr, Vec<Stmt>)>,

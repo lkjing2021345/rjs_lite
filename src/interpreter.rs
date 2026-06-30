@@ -899,6 +899,48 @@ impl Interpreter {
                 }
                 Ok(Flow::Value(last))
             }
+            Stmt::ForIn {
+                left,
+                right,
+                body,
+            } => {
+                let obj = self.eval_expr(right)?;
+                let keys = if let Value::Object(ref o) = obj {
+                    let mut keys = Vec::new();
+                    let mut current = Some(o.clone());
+                    while let Some(c) = current {
+                        let c = c.borrow();
+                        for key in c.props.keys() {
+                            if !c.non_enumerable_props.contains(key) && !keys.contains(key) {
+                                keys.push(key.clone());
+                            }
+                        }
+                        if let Internal::Array(items) = &c.internal {
+                            for (i, item) in items.iter().enumerate() {
+                                if item.is_some() {
+                                    let s = i.to_string();
+                                    if !keys.contains(&s) { keys.push(s); }
+                                }
+                            }
+                        }
+                        current = c.proto.clone();
+                    }
+                    keys
+                } else {
+                    Vec::new()
+                };
+                let mut last = Value::Undefined;
+                for key in keys {
+                    self.assign_target(left, Value::String(key))?;
+                    match self.with_child(body)? {
+                        Flow::Value(v) => last = v,
+                        Flow::Break => break,
+                        Flow::Continue => continue,
+                        r @ (Flow::Return(_) | Flow::Throw(_)) => return Ok(r),
+                    }
+                }
+                Ok(Flow::Value(last))
+            }
             Stmt::Switch {
                 discriminant,
                 cases,

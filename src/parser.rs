@@ -187,9 +187,42 @@ impl Parser {
             Some(Box::new(self.var_decl(false)?))
         } else {
             let expr = self.expression()?;
+            if self.eat(&TokenKind::In) {
+                let right = self.expression()?;
+                self.expect(&TokenKind::RightParen)?;
+                return Ok(Stmt::ForIn {
+                    left: Box::new(expr),
+                    right,
+                    body: self.statement_as_block()?,
+                });
+            }
             self.expect(&TokenKind::Semicolon)?;
             Some(Box::new(Stmt::Expr(expr)))
         };
+        if let Some(init) = &init {
+            if let Stmt::VarDecl { name, value, .. } = init.as_ref() {
+                if self.eat(&TokenKind::In) {
+                    let right = self.expression()?;
+                    self.expect(&TokenKind::RightParen)?;
+                    return Ok(Stmt::ForIn {
+                        left: Box::new(Expr::Identifier(name.clone())),
+                        right,
+                        body: self.statement_as_block()?,
+                    });
+                }
+            }
+            if let Stmt::VarDecls { declarations, .. } = init.as_ref() {
+                if declarations.len() == 1 && self.eat(&TokenKind::In) {
+                    let right = self.expression()?;
+                    self.expect(&TokenKind::RightParen)?;
+                    return Ok(Stmt::ForIn {
+                        left: Box::new(Expr::Identifier(declarations[0].0.clone())),
+                        right,
+                        body: self.statement_as_block()?,
+                    });
+                }
+            }
+        }
         let condition = if self.eat(&TokenKind::Semicolon) {
             None
         } else {
