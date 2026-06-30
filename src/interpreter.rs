@@ -152,6 +152,10 @@ impl Interpreter {
                 .borrow_mut()
                 .props
                 .insert("join".into(), self.native_method("Array.prototype.join"));
+            self.array_proto.borrow_mut().props.insert(
+                "includes".into(),
+                self.native_method("Array.prototype.includes"),
+            );
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
             string_ctor
@@ -196,6 +200,13 @@ impl Interpreter {
             .borrow_mut()
             .props
             .insert(name.to_string(), value);
+    }
+
+    fn same_value_zero(left: &Value, right: &Value) -> bool {
+        match (left, right) {
+            (Value::Number(a), Value::Number(b)) => a == b || (a.is_nan() && b.is_nan()),
+            _ => left == right,
+        }
     }
 
     pub fn run(&mut self, program: &Program) -> JsResult<Value> {
@@ -890,6 +901,36 @@ impl Interpreter {
                 }
                 Ok(Value::String(String::new()))
             }
+            "Array.prototype.includes" => {
+                let needle = args.first().cloned().unwrap_or(Value::Undefined);
+                let from_index = args
+                    .get(1)
+                    .cloned()
+                    .unwrap_or(Value::Number(0.0))
+                    .to_number();
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    let len = items.len() as isize;
+                    let mut start = if from_index.is_nan() {
+                        0
+                    } else if from_index < 0.0 {
+                        len + from_index as isize
+                    } else {
+                        from_index as isize
+                    };
+                    if start < 0 {
+                        start = 0;
+                    }
+                    return Ok(Value::Bool(
+                        items
+                            .iter()
+                            .skip(start as usize)
+                            .any(|value| Self::same_value_zero(value, &needle)),
+                    ));
+                }
+                Ok(Value::Bool(false))
+            }
             "Array.prototype.map" => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
@@ -982,6 +1023,36 @@ mod tests {
     #[test]
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_includes_finds_matching_value() {
+        let src = "[1,2,3].includes(2);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_includes_returns_false_when_missing() {
+        let src = "[1,2,3].includes(4);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn array_includes_uses_positive_from_index() {
+        let src = "[1,2,1].includes(1,1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_includes_uses_negative_from_index() {
+        let src = "[1,2,3].includes(1,-2);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn array_includes_uses_same_value_zero_for_nan() {
+        let src = "let n = 0 / 0; [n].includes(n);";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 
