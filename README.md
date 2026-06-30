@@ -190,6 +190,18 @@ Optional, if Clippy is installed:
 cargo clippy -- -D warnings
 ```
 
+## Process Documentation
+
+[过程性文档 (中文)](docs/process/process-documentation.md) — 目标描述、赛题分析、系统框架设计、开发计划、重要进展、测试情况、问题与解决、分工协作、仓库目录、比赛收获。
+
+## Demo Video
+
+[演示视频 (百度网盘)](https://pan.baidu.com/s/1pnkxA2kUiemy8G6XnHSrWA?pwd=3784) 提取码：3784
+
 ## Upload Notes
 
 The repository is ready for Gitee upload after verification. Keep `Cargo.lock` committed because this is a binary application. Do not upload `target/`, IDE metadata, logs, or local temp files.
+
+# Appendix
+- Demo video link: https://pan.baidu.com/s/1pnkxA2kUiemy8G6XnHSrWA?pwd=3784
+- [View technical documentation](docs/language-subset.md)

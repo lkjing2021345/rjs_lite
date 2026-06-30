@@ -249,6 +249,19 @@ cargo clippy -- -D warnings
 - 日志文件和本地临时文件
 - 自动化工具运行状态目录，例如 `.omo/`
 
+## 过程性文档
+
+[过程性文档](docs/process/process-documentation.md) — 包含目标描述、赛题分析、系统框架设计、开发计划、重要进展、测试情况、问题与解决、分工协作、仓库目录、比赛收获。
+
+## 演示视频
+
+[演示视频 (百度网盘)](https://pan.baidu.com/s/1pnkxA2kUiemy8G6XnHSrWA?pwd=3784) 提取码：3784
+
 ## 当前阶段说明
 
 当前版本已经能作为比赛项目的 MVP 工程提交，但还不是完整 ECMAScript 引擎。后续开发重点应放在 Agent 资源限制、HostFunction 注册、test262 子集推进、对象模型、标准库、性能基准和字节码执行层。
+
+# 附录
+
+- 演示视频链接：https://pan.baidu.com/s/1pnkxA2kUiemy8G6XnHSrWA?pwd=3784
+- [技术文档查看](docs/language-subset-zh-cn.md)

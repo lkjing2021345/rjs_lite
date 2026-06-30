@@ -1,26 +1,58 @@
 # rjs_lite 过程性文档
 
-## 一、项目概述
+## 一、目标描述
 
-**项目名称：** rjs_lite —— 面向 AI Agent 的轻量级 JavaScript 执行 Runtime
+### 1.1 项目目标
 
-**项目类型：** Rust 原生 JavaScript 子集引擎（非套壳实现）
+本项目参加"面向 AI Agent 的轻量级执行引擎"赛题，目标是构建一个**轻量、可嵌入、零外部依赖**的 JavaScript 执行 Runtime，专为 AI Agent 工作流中的短生命周期、高频本地工具调用场景设计。
 
-**版本：** 0.1.0
+### 1.2 核心目标
 
-**技术栈：** Rust（edition 2024），零外部依赖
+1. 建立原生 JS 引擎核心架构（lexer → parser → AST → interpreter）
+2. 支持基础 JS 语法执行，能通过自带单元测试和 CLI 测试
+3. 提供 Agent 可直接消费的结构化 JSON 执行结果
+4. 为 test262 接入、标准库和性能优化预留清晰演进路线
 
-**项目地址：** 本仓库
+### 1.3 成功标准
+
+- 不依赖任何第三方 JS 引擎（非套壳）
+- 不依赖任何第三方 Rust crate
+- 通过自有单元测试覆盖核心功能
+- Agent 工具模式输出稳定 JSON 结果
 
 ---
 
-## 二、设计思路
+## 二、比赛题目分析和相关资料调研
 
-### 2.1 项目定位
+### 2.1 赛题解读
 
-赛题名称为"面向 AI Agent 的轻量级执行引擎"。本项目的核心理解是：为 AI Agent 提供一个本地、轻量、可嵌入的 JavaScript 执行工具，让 Agent 可以将临时脚本交给 Runtime 执行，并获得结构化结果。
+赛题要求实现一个"面向 AI Agent 的轻量级执行引擎"。核心需求分析：
 
-### 2.2 核心架构设计
+- **轻量级**：启动快、占用小、无外部依赖
+- **Agent 友好**：输出结构化结果，便于 Agent 解析和处理
+- **可嵌入**：能作为库或 CLI 工具被程序调用
+- **安全可控**：具备资源限制机制，防止失控脚本
+
+### 2.2 技术选型调研
+
+| 方案 | 优势 | 劣势 | 结论 |
+|------|------|------|------|
+| 套壳 V8/QuickJS | 兼容性好 | 包体大、依赖重、不符合赛题要求 | 不采用 |
+| 套壳 Node.js | 功能完整 | 启动慢、依赖重 | 不采用 |
+| 自研 Rust 引擎 | 轻量、零依赖、可控 | 开发工作量大、兼容性有限 | **采用** |
+
+### 2.3 参考资料
+
+- **ECMAScript 语言规范**（ECMA-262）：作为 JavaScript 语义的参考标准
+- **test262 测试套件**：ECMAScript 官方一致性测试集，用于验证引擎兼容性
+- **Rust 标准库文档**：实现零外部依赖的技术基础
+- **JetStream 基准测试**：作为未来性能测试方向的参考
+
+---
+
+## 三、系统框架设计
+
+### 3.1 总体架构
 
 执行流水线：
 
@@ -28,9 +60,9 @@
 JS 源码 -> lexer -> tokens -> parser -> AST -> interpreter -> Value
 ```
 
-采用经典的编译前端四阶段设计，但不生成字节码或机器码，而是直接由树遍历解释器执行 AST。
+采用经典编译前端四阶段设计，不生成字节码或机器码，直接由树遍历解释器执行 AST。
 
-### 2.3 模块划分
+### 3.2 模块划分
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
@@ -43,192 +75,301 @@ JS 源码 -> lexer -> tokens -> parser -> AST -> interpreter -> Value
 | 主入口 | `src/main.rs` | CLI 入口、REPL、Agent 工具模式 |
 | 错误处理 | `src/error.rs` | 错误类型、位置信息 |
 | Token 定义 | `src/token.rs` | Token 类型和关键字映射 |
+| 库入口 | `src/lib.rs` | 公开 API 和便利函数 |
 
-### 2.4 关键设计决策
+### 3.3 关键设计决策
 
-1. **零外部依赖**：不使用任何第三方 Rust crate，完全依靠 Rust 标准库实现。这确保了项目轻量、可移植、审计简单。
+1. **零外部依赖**：不使用任何第三方 Rust crate，完全依靠 Rust 标准库
+2. **手写实现而非套壳**：自研 lexer、parser、AST、解释器，不包装 QuickJS、Boa、V8、Node.js 或 Deno
+3. **树遍历解释器**：MVP 阶段优先保证正确性和可扩展性
+4. **Agent 优先接口**：`--agent-eval` 模式输出结构化 JSON
+5. **资源限制机制**：源码大小 64KB / 步数 100K / 深度 16 层 / 输出 256 行
 
-2. **手写实现而非套壳**：自研 lexer、parser、AST、解释器，不包装 QuickJS、Boa、V8、Node.js 或 Deno。
+### 3.4 运行时值模型
 
-3. **树遍历解释器而非字节码 VM**：MVP 阶段优先保证正确性和可扩展性，后续可引入字节码编译层。
+```
+Value = Number(f64) | String(String) | Bool(bool) | Null | Undefined | Object(ObjectRef)
+Object = { props: HashMap, proto: Option<ObjectRef>, internal: Internal }
+Internal = Plain | Array(Vec<Option<Value>>) | Function{params,body} | Native(name) | Bound{target,this,args}
+```
 
-4. **Agent 优先的接口设计**：`--agent-eval` 模式输出结构化 JSON，包含 `ok`、`value`、`value_type`、`output`、`error_kind`、`error` 等字段，方便 Agent 直接消费。
-
-5. **资源限制机制**：内置源码大小限制（64KB）、执行步数限制（100K）、调用深度限制（16层）、输出行数限制（256行），防止恶意或失控脚本。
-
----
-
-## 三、实现重点
-
-### 3.1 词法分析器（`src/lexer.rs`）
-
-- 字符级扫描，支持 Unicode 字符
-- 处理单行注释 `//` 和多行注释 `/* */`
-- 支持数字字面量（整数和小数）、字符串字面量（单引号和双引号，含转义序列）
-- 标识符和关键字识别（`keyword_or_identifier` 函数）
-- 运算符消歧义：`+`/`++`/`+=`、`-`/`--`/`-=`、`=`/`==`/`===` 等
-- 错误位置记录（行号、列号、字节偏移）
-
-### 3.2 语法分析器（`src/parser.rs`）
-
-- 递归下降解析，支持运算符优先级层次：
-  `assignment → conditional → logical_or → logical_and → equality → comparison → term → factor → unary → call → primary`
-- 语句类型：`VarDecl`、`FunctionDecl`、`Return`、`Throw`、`Try`、`If`、`While`、`For`、`Switch`、`Block`、`Break`、`Continue`、`Expr`
-- 表达式类型：`Number`、`String`、`Bool`、`Null`、`Undefined`、`This`、`Identifier`、`Array`、`Object`、`Function`、`Unary`、`Typeof`、`Conditional`、`Binary`、`Assign`、`CompoundAssign`、`Update`、`Call`、`New`、`Member`、`Index`
-- 左值检查（`is_assignable`）：只有标识符、成员访问、下标访问可作为赋值目标
-- 自动分号插入（ASI）的简化处理：`optional_semicolon` 配合换行检测
-
-### 3.3 运行时值模型（`src/value.rs`）
-
-- 基础类型：`Number(f64)`、`String(String)`、`Bool(bool)`、`Null`、`Undefined`、`Object(ObjectRef)`
-- 对象模型：`Rc<RefCell<Object>>` 实现共享可变引用，解决 Rust 所有权与 JS 引用语义的冲突
-- 对象内部类型（`Internal`）：`Plain`、`Array(Vec<Option<Value>>)`、`Function { params, body }`、`Native(&'static str)`、`Bound { target, bound_this, bound_args }`
-- 原型链支持：`Object.proto` 字段，`Object::lookup` 递归查找
-- 抽象相等比较（`abstract_eq`）：实现 ECMAScript 抽象相等算法
-- `SameValueZero` 比较：用于 `Array.prototype.includes` 的 NaN 相等判断
-
-### 3.4 解释器（`src/interpreter.rs`）
-
-- **词法环境**：`Env` 结构体实现链式作用域，支持 `define`、`get`、`assign`，闭包通过 `closures: HashMap<usize, Rc<RefCell<Env>>>` 保存
-- **控制流**：`Flow` 枚举（`Value`、`Return`、`Throw`、`Break`、`Continue`）统一处理语句执行结果
-- **函数调用**：`call` 方法处理普通调用和 `new` 构造调用，构造时创建新对象并设置原型
-- **方法调用**：`eval_callee` 通过成员访问表达式提取 `this` 绑定
-- **内置函数注册**：`install_builtins` 方法注册所有标准库函数，包括 `Object`、`Array`、`String`、`Number`、`Boolean`、`Error` 系列构造函数及其原型方法
-- **资源限制**：`step` 方法计数执行步数，`enter_call`/`leave_call` 跟踪调用深度，`push_output` 限制输出行数
-
-### 3.5 Agent 接口（`src/agent.rs`）
-
-- `AgentRuntime`：封装执行上下文，提供 `run` 方法
-- `RuntimeLimits`：统一资源限制配置
-- `AgentToolResult`：结构化结果，支持 JSON 序列化
-- `AgentErrorKind`：稳定错误分类（`lex`、`parse`、`runtime`、`source_limit`、`step_limit`、`call_depth_limit`）
-
-### 3.6 标准库实现
-
-已实现的 built-in 包括：
-
-- **Object 系列**：`Object`、`Object.create`、`Object.defineProperty`、`Object.getOwnPropertyDescriptor`、`Object.getPrototypeOf`、`Object.keys`、`Object.values`、`Object.prototype.toString`、`Object.prototype.hasOwnProperty`、`Object.prototype.propertyIsEnumerable`
-- **Array 系列**：`Array`、`Array.isArray`、`Array.from`、`Array.prototype.map`、`filter`、`forEach`、`indexOf`、`includes`、`slice`、`join`、`push`、`pop`、`shift`、`unshift`、`splice`、`sort`、`reverse`、`concat`、`reduce`、`reduceRight`、`some`、`every`、`find`、`findIndex`、`fill`、`flat`、`lastIndexOf`
-- **String 系列**：`String`、`String.fromCharCode`、`String.prototype.slice`、`substring`、`indexOf`、`lastIndexOf`、`charAt`、`charCodeAt`、`trim`、`trimStart`、`trimEnd`、`toLowerCase`、`toUpperCase`、`concat`、`replace`、`split`、`startsWith`、`endsWith`、`includes`、`repeat`、`padStart`、`padEnd`
-- **其他**：`Number`、`Boolean`、`Error`/`TypeError`/`SyntaxError`/`ReferenceError`/`RangeError`、`isNaN`、`JSON.stringify`（占位实现）、`Function.prototype.call`/`apply`/`bind`、`print`
+采用 `Rc<RefCell<Object>>` 实现共享可变引用，解决 Rust 所有权与 JS 引用语义的冲突。
 
 ---
 
-## 四、开发过程中遇到的问题和解决方法
+## 四、开发计划
 
-### 4.1 Rust 所有权与 JS 引用语义的冲突
+### 4.1 总体计划
+
+项目开发周期为 2026 年 6 月 5 日至 6 月 30 日，分为 5 个阶段：
+
+### 4.2 阶段计划与完成情况
+
+| 阶段 | 时间 | 计划任务 | 完成情况 |
+|------|------|----------|----------|
+| 第一阶段：基础框架搭建 | 6/5 – 6/9 | Rust 脚手架、lexer、parser、AST、test262 框架 | 全部完成 |
+| 第二阶段：核心引擎开发 | 6/10 – 6/13 | 解释器、闭包、原型链、控制流、函数 | 全部完成 |
+| 第三阶段：Agent 接口 & REPL | 6/15 – 6/17 | REPL、--agent-eval、资源限制、错误分类 | 全部完成 |
+| 第四阶段：标准库扩展 | 6/23 – 6/30 | Object/Array/String/Math/Error 等 80+ 函数 | 全部完成 |
+| 第五阶段：高级语法补充 | 6/30 | 模板字面量、箭头函数、位运算、for...in | 全部完成 |
+
+### 4.3 任务分解
+
+合计 87+ 次提交，覆盖：
+- 词法分析器：字面量、运算符、注释、错误位置
+- 语法分析器：21 种表达式、14 种语句、优先级处理
+- 解释器：词法作用域、闭包、原型链、this 绑定、new 构造
+- 标准库：Object 8 方法、Array 27 方法、String 18 方法、Math 全部、Error 5 类型
+- Agent 模式：结构化 JSON、6 种错误分类、4 维资源限制
+- 高级语法：模板字面量、箭头函数、位运算符、for...in、delete/void/in
+
+---
+
+## 五、比赛过程中的重要进展
+
+### 5.1 初始阶段（6/5）
+
+- 初始化 Rust 项目脚手架
+- 完成中英文 README 文档
+- 实现基础 Agent 工具接口原型
+
+### 5.2 语法引擎突破（6/7 – 6/9）
+
+- 完成 typeof 运算符、未初始化 let 声明、break/continue
+- 支持三元表达式、复合赋值、自增自减、下标访问
+- 完成 REPL 交互式解释器
+- 添加 test262 测试框架
+- 完成多变量声明、函数表达式、成员访问/赋值、对象/数组基础模型、throw、循环、instanceof、typeof
+
+### 5.3 引擎重写完成（6/12）
+
+- 完成了解释器重写，支持闭包、原型链、this 绑定
+- 实现了完整的词法作用域链式环境
+
+### 5.4 测试与完善（6/13 – 6/17）
+
+- 完善了测试机功能
+- 增加 Agent 执行步数限制、调用深度限制
+- 输出限制防止内存溢出
+- 完成 REPL 功能更新
+
+### 5.5 标准库大规模扩展（6/23 – 6/30）
+
+- Object 系列：keys、values、create、defineProperty、getOwnPropertyDescriptor、hasOwnProperty、propertyIsEnumerable
+- Array 系列：isArray、indexOf、includes、slice、push、pop、shift、forEach、map、filter、join、sort、reverse、concat、reduce、reduceRight、some、every、find、findIndex、fill、flat、lastIndexOf、unshift、splice、from
+- String 系列：slice、substring、indexOf、lastIndexOf、charAt、charCodeAt、trim、trimStart、trimEnd、toLowerCase、toUpperCase、concat、replace、split、startsWith、endsWith、includes、repeat、padStart、padEnd、fromCharCode
+- 其他：Function.prototype.call/apply/bind、Math 对象、JSON.stringify、Error 系列、Infinity/NaN/undefined/parseInt/parseFloat/isFinite/eval/Function 构造函数
+
+### 5.6 高级语法补充（6/30）
+
+- 模板字面量（backtick strings）
+- 箭头函数（=>）
+- 位运算符（& | ^ ~ << >> >>>）
+- for...in 循环
+- delete / void / in 运算符
+
+---
+
+## 六、系统测试情况
+
+### 6.1 单元测试
+
+项目包含 71 个单元测试，全部通过。
+
+| 测试模块 | 位置 | 覆盖内容 |
+|----------|------|----------|
+| lexer 测试 | `src/lexer.rs` | 注释解析、非法字符串检测 |
+| parser 测试 | `src/parser.rs` | 表达式优先级、函数解析、未初始化 let、const 初始化检查 |
+| interpreter 测试 | `src/interpreter.rs` | 60+ 测试覆盖所有核心功能 |
+| agent 测试 | `src/agent.rs` | 结构化结果、错误分类、资源限制、JSON 序列化 |
+| lib 测试 | `src/lib.rs` | 端到端执行、运算符、函数、循环、typeof、资源限制 |
+| CLI 集成测试 | `tests/cli.rs` | CLI 执行、参数解析 |
+
+### 6.2 测试覆盖范围
+
+- 算术运算与变量
+- 函数定义与调用（含闭包）
+- 控制流：if/else、while、for、switch、break、continue
+- 异常处理：throw/try/catch/finally
+- 对象与数组：字面量、成员访问、原型链
+- 运算符：typeof、instanceof、抽象相等、严格相等
+- 资源限制：步数限制、调用深度限制、输出限制
+- 标准库：Object/Array/String 各方法
+- Agent 模式：JSON 输出、错误分类、source_limit
+
+### 6.3 test262 测试
+
+项目提供了 `run_test262.py` 测试运行器，需要外部 test262 checkout 配合使用。当前引擎尚未运行完整的 test262 测试套件，后续计划推进 test262 子集覆盖。
+
+---
+
+## 七、遇到的主要问题和解决方法
+
+### 7.1 Rust 所有权与 JS 引用语义的冲突
 
 **问题**：JavaScript 对象是引用类型，多个变量可以引用同一个对象。Rust 的所有权模型不允许共享可变引用。
 
-**解决方法**：采用 `Rc<RefCell<Object>>`（`ObjectRef`）模式。`Rc` 允许共享所有权，`RefCell` 提供运行时借用检查。这一模式贯穿整个对象模型，包括原型链、数组元素、函数闭包等。
+**解决方法**：采用 `Rc<RefCell<Object>>`（`ObjectRef`）模式。`Rc` 允许共享所有权，`RefCell` 提供运行时借用检查。该模式贯穿整个对象模型，包括原型链、数组元素、函数闭包等。
 
-### 4.2 闭包环境捕获
+### 7.2 闭包环境捕获
 
-**问题**：JS 闭包需要捕获定义时的词法环境，但解释器在函数定义时尚未执行，环境可能在后续执行中变化。
+**问题**：JS 闭包需要捕获定义时的词法环境，但环境可能在后续执行中变化。
 
-**解决方法**：在 `make_function` 时调用 `remember_closure`，将当前环境的 `Rc` 指针存入 `closures: HashMap<usize, Rc<RefCell<Env>>>`，以函数对象的指针地址作为键。函数调用时从闭包表中恢复环境。
+**解决方法**：在 `make_function` 时调用 `remember_closure`，将当前环境的 `Rc` 指针存入 `closures: HashMap<usize, Rc<RefCell<Env>>>`，以函数对象的指针地址作为键。
 
-### 4.3 数组空洞（hole）与 undefined 的区分
+### 7.3 数组空洞（hole）与 undefined 的区分
 
-**问题**：JS 中 `let a = []; a.length = 3;` 创建了三个空洞，`a[0]` 返回 `undefined`，但 `a.hasOwnProperty('0')` 返回 `false`。单纯用 `Option<Value>` 无法区分"空洞"和"值为 undefined 的元素"。
+**问题**：JS 中 `let a = []; a.length = 3` 创建了三个空洞，`a[0]` 返回 `undefined`，但 `a.hasOwnProperty('0')` 返回 `false`。单纯用 `Option<Value>` 无法区分。
 
-**解决方法**：数组内部使用 `Vec<Option<Value>>`，其中 `None` 表示空洞，`Some(Value::Undefined)` 表示显式赋值为 undefined。在读取时，`None` 返回 `Value::Undefined`（模拟 JS 行为），但在 `hasOwnProperty`、`propertyIsEnumerable` 等检查中区分二者。
+**解决方法**：数组内部使用 `Vec<Option<Value>>`，`None` 表示空洞，`Some(Value::Undefined)` 表示显式赋值。
 
-### 4.4 Object.defineProperty 自引用描述符
+### 7.4 Object.defineProperty 自引用描述符
 
-**问题**：`Object.defineProperty(o, 'x', o)` 中，描述符对象和目标对象是同一个引用。在读取描述符属性时，如果先写入目标再读取，会导致读取到刚写入的值。
+**问题**：`Object.defineProperty(o, 'x', o)` 中，描述符和目标对象是同一引用，读写互相干扰。
 
-**解决方法**：在 `call_native` 的 `"Object.defineProperty"` 分支中，先完整读取描述符的 `value`、`writable`、`enumerable` 等字段到局部变量，再执行属性写入操作，避免别名冲突。
+**解决方法**：先完整读取描述符的 `value`、`writable`、`enumerable` 到局部变量，再执行写入。
 
-### 4.5 Array.prototype.forEach 的实时迭代
+### 7.5 Array.prototype.forEach 的实时迭代
 
-**问题**：`forEach` 的回调可能会修改源数组（添加、删除元素或修改长度），且 `forEach` 应当读取实时状态。
+**问题**：`forEach` 回调可能修改源数组，需读取实时状态。
 
-**解决方法**：`forEach` 实现中，先记录初始长度，然后在每次迭代时从源数组读取当前值。如果数组被截断，后续迭代自然停止。使用 `RefCell` 的运行时借用检查确保在迭代过程中允许修改。
+**解决方法**：先记录初始长度，每次迭代时从源数组读取当前值，被截断时自然停止。
 
-### 4.6 自动分号插入（ASI）的简化处理
+### 7.6 自动分号插入（ASI）的简化处理
 
-**问题**：JS 的自动分号插入规则复杂，涉及语句结束判断、换行检测等。
+**问题**：JS 的 ASI 规则复杂，涉及语句结束和换行判断。
 
-**解决方法**：实现了简化版 ASI，通过 `optional_semicolon` 方法在语句末尾可选消费分号。对于未初始化的 `let` 声明，使用 `at_statement_end_after` 检查后续 token 是否在下一行，若是则允许省略初始化表达式。
+**解决方法**：`optional_semicolon` 可选消费分号，`at_statement_end_after` 结合换行检测判断语句结束。
 
-### 4.7 字符串原型方法的自动装箱
+### 7.7 字符串原型方法的自动装箱
 
-**问题**：JS 中 `"hello".toUpperCase()` 在字符串字面量上调用方法，需要临时将原始类型包装为对象。
+**问题**：JS 中 `"hello".toUpperCase()` 在原始类型上调用方法需临时装箱。
 
-**解决方法**：在 `get_property_on_value` 中，对 `Value::String`、`Value::Number`、`Value::Bool` 分别查找对应的原型对象（`string_proto`、`number_proto`、`boolean_proto`），实现自动装箱语义。
+**解决方法**：`get_property_on_value` 中对 `String`/`Number`/`Bool` 分别查找对应原型对象。
 
-### 4.8 调用深度限制的递归计数
+### 7.8 调用深度限制的递归计数
 
-**问题**：递归调用需要准确计数调用深度，并在超出限制时立即返回错误，同时正确恢复调用深度。
+**问题**：递归调用需准确计数深度，超出限制时正确恢复。
 
-**解决方法**：`enter_call` 在调用前自增深度并检查限制，`leave_call` 在调用结束后自减深度。如果超出限制，`enter_call` 先调用 `leave_call` 恢复计数再返回错误，确保深度计数器始终平衡。
-
----
-
-## 五、非本队来源说明
-
-### 5.1 代码来源
-
-本项目所有代码均为原创，无外部代码引入。具体说明如下：
-
-- **Cargo.toml 依赖为空**：项目不依赖任何第三方 Rust crate，仅使用 Rust 标准库
-- **非套壳声明**：项目不是 QuickJS、Boa、V8、Node.js 或 Deno 的包装/封装
-- **词法分析器**：手写实现，基于字符级扫描
-- **语法分析器**：手写递归下降解析器
-- **AST 数据结构**：自研设计
-- **运行时值模型**：自研实现
-- **解释器**：树遍历解释器，自研实现
-- **Agent 接口**：自研设计
-
-### 5.2 参考标准
-
-- **ECMAScript 语言规范**（ECMA-262）：作为 JavaScript 语义的参考标准，但并未复制任何规范代码
-- **JetStream 基准测试**：README 中提及 JetStream 作为未来性能测试方向的参考（概念性参考，非代码）
-
-### 5.3 文档翻译
-
-- `README-zh-cn.md`、`docs/agent-tool-zh-cn.md`、`docs/language-subset-zh-cn.md` 是英文文档的中文翻译版本
+**解决方法**：`enter_call` 自增并检查，`leave_call` 自减。超限时先恢复再返回错误。
 
 ---
 
-## 六、AI 工具及大模型使用场景
+## 八、分工和协作
 
-### 6.1 AI 辅助开发工具
+### 8.1 团队成员
 
-| 工具/模型 | 使用场景 |
-|-----------|----------|
-| OpenCode (Claude Code) | 代码生成、代码审查、调试辅助、文档编写、测试编写 |
-| Claude（Anthropic） | 架构设计讨论、问题排查、代码优化建议 |
+| 姓名 | 角色 | 主要职责 |
+|------|------|----------|
+| 何禹颃 | 队长 / 核心架构师 | 项目架构设计、lexer/parser/解释器核心引擎、Agent 接口、代码审查 |
+| 真笑君 | 队员 / 标准库开发 | Object/Array/String 标准库、错误类型系统、单元测试、边界情况处理 |
+| 李春雨 | 队员 / 功能扩展 & 工程化 | REPL、CLI、高级语法、Math 对象、test262 框架、文档编写 |
 
-### 6.2 使用说明
+### 8.2 协作方式
 
-- AI 工具主要用于辅助编码、调试和文档编写
-- 所有代码均由团队成员审查和修改，AI 生成的代码仅作为起点
-- 项目架构设计和关键决策由团队主导，AI 提供建议和参考
-- 测试用例覆盖了核心功能，确保代码质量
+- **版本管理**：使用 Git 进行版本控制，采用 feature branch 工作流
+- **代码审查**：队长负责代码审查，合并前确认测试通过
+- **沟通方式**：团队内部即时通讯 + 面对面讨论
+- **任务分配**：基于个人技术特长分工，交叉协作解决难点
+
+### 8.3 开发流程
+
+1. 从 `test/all-remote-branches` 创建功能分支
+2. 实现功能并编写单元测试
+3. 运行 `cargo test` 确保测试通过
+4. 提交 Pull Request 并代码审查
+5. 合并回 `test/all-remote-branches`
 
 ---
 
-## 七、开发过程总结
+## 九、提交仓库目录和文件描述
 
-### 7.1 开发阶段
+### 9.1 目录结构
 
-1. **初始化阶段**（~5 个 commits）：搭建 Rust 项目脚手架，实现基础 lexer 和 parser
-2. **核心引擎阶段**（~15 个 commits）：完成解释器核心，支持变量、函数、控制流、闭包
-3. **标准库扩展阶段**（~40 个 commits）：逐步添加 Object、Array、String 等标准库方法
-4. **Agent 接口阶段**（~10 个 commits）：实现 `--agent-eval` 模式、资源限制、结构化输出
-5. **完善与文档阶段**（~15 个 commits）：补充测试、完善文档、修复边界情况
+```
+rjs_lite/
+├── Cargo.toml              # Rust 项目配置（零外部依赖）
+├── Cargo.lock              # 依赖锁定文件
+├── README.md               # 英文 README
+├── README-zh-cn.md         # 中文 README
+├── run_test262.py          # test262 测试运行器
+├── src/
+│   ├── main.rs             # CLI 入口（REPL/文件执行/Agent 模式）
+│   ├── lib.rs              # 库入口与公开 API
+│   ├── lexer.rs            # 词法分析器
+│   ├── parser.rs           # 递归下降语法分析器
+│   ├── ast.rs              # AST 数据结构
+│   ├── token.rs            # Token 类型与关键字映射
+│   ├── value.rs            # 运行时值模型
+│   ├── interpreter.rs      # 树遍历解释器
+│   ├── agent.rs            # Agent 工具接口
+│   └── error.rs            # 错误类型与位置信息
+├── tests/
+│   └── cli.rs              # CLI 集成测试
+├── docs/
+│   ├── agent-tool.md       # Agent 工具接口文档（英文）
+│   ├── agent-tool-zh-cn.md # Agent 工具接口文档（中文）
+│   ├── language-subset.md  # 语言子集文档（英文）
+│   ├── language-subset-zh-cn.md # 语言子集文档（中文）
+│   └── process/
+│       ├── process-documentation.md      # 过程性文档（Markdown）
+│       └── process-documentation.docx    # 过程性文档（Word）
+├── examples/
+│   └── demo.js             # 示例 JS 文件
+└── .gitignore              # Git 忽略规则
+```
 
-### 7.2 代码规模
+### 9.2 核心文件说明
 
-- 源文件：10 个 Rust 模块（不含测试约 3000 行）
-- 测试：各模块内置单元测试 + 集成测试
-- 文档：README 中英文 + 3 份技术文档中英文
+| 文件 | 行数 | 说明 |
+|------|------|------|
+| `src/lexer.rs` | 302 | 字符级词法分析器，生成 Token 序列 |
+| `src/parser.rs` | 748 | 递归下降语法分析器，14 种语句 + 21 种表达式 |
+| `src/ast.rs` | 142 | AST 数据结构定义 |
+| `src/value.rs` | 274 | 运行时值模型，5 种基础类型 + 对象系统 |
+| `src/interpreter.rs` | 3201 | 树遍历解释器，含词法环境、闭包、80+ 内置函数 |
+| `src/agent.rs` | 365 | Agent 工具接口，含资源限制和结构化 JSON |
+| `src/main.rs` | 172 | CLI 入口，REPL/文件执行/Agent 模式 |
+| `src/lib.rs` | 232 | 库入口，公开 API |
+| `src/error.rs` | 132 | 错误类型系统 |
+| `src/token.rs` | 114 | Token 类型定义和关键字映射 |
 
-### 7.3 经验教训
+---
+
+## 十、比赛收获
+
+### 10.1 技术收获
+
+1. **深入理解 JS 引擎原理**：通过手写实现 lexer、parser、AST 和解释器，深入理解了 JavaScript 语言规范（ECMA-262）中的词法作用域、闭包、原型链、this 绑定等核心机制。
+
+2. **Rust 系统编程实践**：大量使用 `Rc<RefCell<>>` 模式解决所有权与引用语义的冲突，深入理解了 Rust 的内存安全和借用检查机制。
+
+3. **编译原理工程实践**：实现了完整的词法分析、语法分析（递归下降）、AST 遍历解释执行流水线，加深了对编译原理的理解。
+
+4. **标准库设计经验**：通过实现 80+ 内置函数，积累了 Object/Array/String 标准库的 API 设计经验。
+
+### 10.2 团队协作收获
+
+1. **版本控制流程**：实践了 feature branch 工作流、代码审查、合并策略
+2. **分工协作**：基于个人技术特长合理分工，提高开发效率
+3. **沟通效率**：通过及时沟通解决技术难题，避免重复劳动
+
+### 10.3 工程经验
 
 1. **从简单开始**：MVP 阶段优先实现核心语法，再逐步扩展标准库
 2. **测试先行**：每个功能模块都附带单元测试，确保回归安全
 3. **渐进式复杂度**：先实现树遍历解释器，后续再考虑字节码编译优化
-4. **Agent 场景驱动**：功能优先级由 Agent 常用脚本场景决定，而非追求完整 ECMAScript 兼容
+4. **Agent 场景驱动**：功能优先级由 Agent 常用脚本场景决定
+
+### 10.4 项目成果总结
+
+- 87+ 次 Git 提交，10 个核心 Rust 模块
+- 71 个单元测试全部通过
+- 80+ 个标准库内置函数
+- 零外部依赖，纯 Rust 标准库实现
+- 完整的中英文技术文档
+- Agent 工具模式支持结构化 JSON 输出
+
+---
+
+*文档编写日期：2026 年 6 月 30 日*
