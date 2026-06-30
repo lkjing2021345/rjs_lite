@@ -271,6 +271,11 @@ impl Interpreter {
                 "slice",
                 self.native_method("Array.prototype.slice"),
             );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "pop",
+                self.native_method("Array.prototype.pop"),
+            );
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
             Self::define_non_enumerable(&string_ctor, "prototype", Value::Object(Object::plain()));
@@ -1359,6 +1364,14 @@ impl Interpreter {
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
+            "Array.prototype.pop" => {
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                {
+                    return Ok(items.pop().flatten().unwrap_or(Value::Undefined));
+                }
+                Ok(Value::Undefined)
+            }
             "Array.prototype.map" => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
@@ -1725,6 +1738,36 @@ mod tests {
     #[test]
     fn array_slice_is_not_enumerable() {
         let src = "Array.prototype.propertyIsEnumerable('slice');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn array_pop_returns_last_item_and_removes_it() {
+        let src = "let a=[1,2,3]; let v=a.pop(); v + ':' + a.join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("3:1,2".into()));
+    }
+
+    #[test]
+    fn array_pop_updates_length() {
+        let src = "let a=[1,2]; a.pop(); a.length;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn array_pop_empty_array_returns_undefined() {
+        let src = "let a=[]; a.pop() === undefined && a.length === 0;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_pop_hole_returns_undefined_and_removes_slot() {
+        let src = "let a=[]; a.length=1; a.pop() === undefined && a.length === 0;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_pop_is_not_enumerable() {
+        let src = "Array.prototype.propertyIsEnumerable('pop');";
         assert_eq!(run_source(src).unwrap(), Value::Bool(false));
     }
 
