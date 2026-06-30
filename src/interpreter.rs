@@ -81,6 +81,9 @@ pub struct Interpreter {
     function_proto: ObjectRef,
     array_proto: ObjectRef,
     error_proto: ObjectRef,
+    string_proto: ObjectRef,
+    number_proto: ObjectRef,
+    boolean_proto: ObjectRef,
     step_limit: Option<usize>,
     steps: usize,
     max_call_depth: Option<usize>,
@@ -130,6 +133,9 @@ impl Interpreter {
         let function_proto = Object::plain();
         let array_proto = Object::plain();
         let error_proto = Object::plain();
+        let string_proto = Object::plain();
+        let number_proto = Object::plain();
+        let boolean_proto = Object::plain();
         let mut this = Self {
             env,
             closures: HashMap::new(),
@@ -139,6 +145,9 @@ impl Interpreter {
             function_proto,
             array_proto,
             error_proto,
+            string_proto,
+            number_proto,
+            boolean_proto,
             step_limit,
             steps: 0,
             max_call_depth,
@@ -173,6 +182,9 @@ impl Interpreter {
         self.function_proto.borrow_mut().proto = Some(self.object_proto.clone());
         self.array_proto.borrow_mut().proto = Some(self.object_proto.clone());
         self.error_proto.borrow_mut().proto = Some(self.object_proto.clone());
+        self.string_proto.borrow_mut().proto = Some(self.object_proto.clone());
+        self.number_proto.borrow_mut().proto = Some(self.object_proto.clone());
+        self.boolean_proto.borrow_mut().proto = Some(self.object_proto.clone());
 
         if let Some(Value::Object(object_ctor)) = self.env.borrow().get("Object") {
             Self::define_non_enumerable(
@@ -360,7 +372,130 @@ impl Interpreter {
             );
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
-            Self::define_non_enumerable(&string_ctor, "prototype", Value::Object(Object::plain()));
+            Self::define_non_enumerable(
+                &string_ctor,
+                "prototype",
+                Value::Object(self.string_proto.clone()),
+            );
+            Self::define_non_enumerable(
+                &string_ctor,
+                "fromCharCode",
+                self.native_method("String.fromCharCode"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "slice",
+                self.native_method("String.prototype.slice"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "substring",
+                self.native_method("String.prototype.substring"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "indexOf",
+                self.native_method("String.prototype.indexOf"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "lastIndexOf",
+                self.native_method("String.prototype.lastIndexOf"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "charAt",
+                self.native_method("String.prototype.charAt"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "charCodeAt",
+                self.native_method("String.prototype.charCodeAt"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "trim",
+                self.native_method("String.prototype.trim"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "trimStart",
+                self.native_method("String.prototype.trimStart"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "trimEnd",
+                self.native_method("String.prototype.trimEnd"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "toLowerCase",
+                self.native_method("String.prototype.toLowerCase"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "toUpperCase",
+                self.native_method("String.prototype.toUpperCase"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "concat",
+                self.native_method("String.prototype.concat"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "replace",
+                self.native_method("String.prototype.replace"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "split",
+                self.native_method("String.prototype.split"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "startsWith",
+                self.native_method("String.prototype.startsWith"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "endsWith",
+                self.native_method("String.prototype.endsWith"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "includes",
+                self.native_method("String.prototype.includes"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "repeat",
+                self.native_method("String.prototype.repeat"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "padStart",
+                self.native_method("String.prototype.padStart"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "padEnd",
+                self.native_method("String.prototype.padEnd"),
+            );
+        }
+        if let Some(Value::Object(number_ctor)) = self.env.borrow().get("Number") {
+            Self::define_non_enumerable(
+                &number_ctor,
+                "prototype",
+                Value::Object(self.number_proto.clone()),
+            );
+        }
+        if let Some(Value::Object(boolean_ctor)) = self.env.borrow().get("Boolean") {
+            Self::define_non_enumerable(
+                &boolean_ctor,
+                "prototype",
+                Value::Object(self.boolean_proto.clone()),
+            );
         }
         for name in [
             "Error",
@@ -818,26 +953,14 @@ impl Interpreter {
         match expr {
             Expr::Member { object, property } => {
                 let object_value = self.eval_expr(object)?;
-                if let Value::Object(o) = object_value.clone() {
-                    Ok((
-                        Object::lookup(&o, property).unwrap_or(Value::Undefined),
-                        object_value,
-                    ))
-                } else {
-                    Ok((Value::Undefined, object_value))
-                }
+                let method = self.get_property_on_value(&object_value, property);
+                Ok((method, object_value))
             }
             Expr::Index { object, index } => {
                 let object_value = self.eval_expr(object)?;
                 let key = self.eval_expr(index)?.to_string();
-                if let Value::Object(o) = object_value.clone() {
-                    Ok((
-                        Object::lookup(&o, &key).unwrap_or(Value::Undefined),
-                        object_value,
-                    ))
-                } else {
-                    Ok((Value::Undefined, object_value))
-                }
+                let method = self.get_property_on_value(&object_value, &key);
+                Ok((method, object_value))
             }
             _ => {
                 let this = if self.strict {
@@ -886,9 +1009,14 @@ impl Interpreter {
                 .borrow()
                 .get(name)
                 .ok_or_else(|| JsError::reference_error(format!("{name} is not defined"))),
-            Expr::Member { .. } | Expr::Index { .. } => {
-                let r = self.get_ref(target)?;
-                Ok(self.get_property(&r.object, &r.property))
+            Expr::Member { object, property } => {
+                let obj = self.eval_expr(object)?;
+                Ok(self.get_property_on_value(&obj, property))
+            }
+            Expr::Index { object, index } => {
+                let obj = self.eval_expr(object)?;
+                let key = self.eval_expr(index)?.to_string();
+                Ok(self.get_property_on_value(&obj, &key))
             }
             _ => self.eval_expr(target),
         }
@@ -916,6 +1044,25 @@ impl Interpreter {
             }
         }
         Object::lookup(object, property).unwrap_or(Value::Undefined)
+    }
+
+    fn get_property_on_value(&self, value: &Value, property: &str) -> Value {
+        match value {
+            Value::String(s) => {
+                if property == "length" {
+                    return Value::Number(s.len() as f64);
+                }
+                Object::lookup(&self.string_proto, property).unwrap_or(Value::Undefined)
+            }
+            Value::Number(_) => {
+                Object::lookup(&self.number_proto, property).unwrap_or(Value::Undefined)
+            }
+            Value::Bool(_) => {
+                Object::lookup(&self.boolean_proto, property).unwrap_or(Value::Undefined)
+            }
+            Value::Object(o) => self.get_property(o, property),
+            _ => Value::Undefined,
+        }
     }
 
     fn set_property(&self, object: &ObjectRef, property: &str, value: Value) {
@@ -1990,6 +2137,199 @@ impl Interpreter {
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
+            "String.prototype.slice" => {
+                let s = self.this_str(&this_value);
+                let len = s.len() as isize;
+                let start = args.first().map(|v| v.to_number()).unwrap_or(0.0);
+                let start = Self::array_slice_bound(start, len);
+                let end = args.get(1).map(|v| v.to_number()).unwrap_or(len as f64);
+                let end = Self::array_slice_bound(end, len);
+                let result = if end > start {
+                    s.chars().skip(start as usize).take((end - start) as usize).collect()
+                } else {
+                    String::new()
+                };
+                Ok(Value::String(result))
+            }
+            "String.prototype.substring" => {
+                let s = self.this_str(&this_value);
+                let len = s.len();
+                let start = args.first().map(|v| v.to_number()).unwrap_or(0.0).clamp(0.0, len as f64) as usize;
+                let end = args.get(1).map(|v| v.to_number()).unwrap_or(len as f64).clamp(0.0, len as f64) as usize;
+                let (start, end) = (start.min(end), start.max(end));
+                Ok(Value::String(s.chars().skip(start).take(end - start).collect()))
+            }
+            "String.prototype.indexOf" => {
+                let s = self.this_str(&this_value);
+                let needle = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let from = args.get(1).map(|v| v.to_number()).unwrap_or(0.0).clamp(0.0, s.len() as f64) as usize;
+                if let Some(pos) = s[from..].find(&needle) {
+                    Ok(Value::Number((from + pos) as f64))
+                } else {
+                    Ok(Value::Number(-1.0))
+                }
+            }
+            "String.prototype.lastIndexOf" => {
+                let s = self.this_str(&this_value);
+                let needle = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let from = args.get(1).map(|v| v.to_number()).unwrap_or(s.len() as f64);
+                let from = if from < 0.0 { 0 } else { (from as usize).min(s.len()) };
+                if let Some(pos) = s[..from].rfind(&needle) {
+                    Ok(Value::Number(pos as f64))
+                } else {
+                    Ok(Value::Number(-1.0))
+                }
+            }
+            "String.prototype.charAt" => {
+                let s = self.this_str(&this_value);
+                let pos = args.first().map(|v| v.to_number()).unwrap_or(0.0);
+                if pos < 0.0 || pos >= s.len() as f64 {
+                    Ok(Value::String(String::new()))
+                } else {
+                    Ok(Value::String(s.chars().nth(pos as usize).unwrap_or(' ').to_string()))
+                }
+            }
+            "String.prototype.charCodeAt" => {
+                let s = self.this_str(&this_value);
+                let pos = args.first().map(|v| v.to_number()).unwrap_or(0.0);
+                if pos < 0.0 || pos >= s.len() as f64 {
+                    Ok(Value::Number(f64::NAN))
+                } else {
+                    Ok(Value::Number(s.chars().nth(pos as usize).map_or(f64::NAN, |c| c as u32 as f64)))
+                }
+            }
+            "String.prototype.trim" => {
+                Ok(Value::String(self.this_str(&this_value).trim().to_string()))
+            }
+            "String.prototype.trimStart" => {
+                Ok(Value::String(self.this_str(&this_value).trim_start().to_string()))
+            }
+            "String.prototype.trimEnd" => {
+                Ok(Value::String(self.this_str(&this_value).trim_end().to_string()))
+            }
+            "String.prototype.toLowerCase" => {
+                Ok(Value::String(self.this_str(&this_value).to_lowercase()))
+            }
+            "String.prototype.toUpperCase" => {
+                Ok(Value::String(self.this_str(&this_value).to_uppercase()))
+            }
+            "String.prototype.concat" => {
+                let mut result = self.this_str(&this_value);
+                for arg in &args {
+                    result.push_str(&arg.to_string());
+                }
+                Ok(Value::String(result))
+            }
+            "String.prototype.replace" => {
+                let s = self.this_str(&this_value);
+                let needle = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let replacement = args.get(1).cloned().unwrap_or(Value::Undefined).to_string();
+                if let Some(pos) = s.find(&needle) {
+                    let mut result = s[..pos].to_string();
+                    result.push_str(&replacement);
+                    result.push_str(&s[pos + needle.len()..]);
+                    Ok(Value::String(result))
+                } else {
+                    Ok(Value::String(s))
+                }
+            }
+            "String.prototype.split" => {
+                let s = self.this_str(&this_value);
+                let sep = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let limit = args.get(1).map(|v| v.to_number() as usize);
+                if sep.is_empty() {
+                    let mut chars: Vec<Option<Value>> = s.chars().map(|c| Some(Value::String(c.to_string()))).collect();
+                    if let Some(lim) = limit {
+                        chars.truncate(lim);
+                    }
+                    let obj = Object::with_internal(Internal::Array(chars));
+                    obj.borrow_mut().proto = Some(self.array_proto.clone());
+                    return Ok(Value::Object(obj));
+                }
+                let parts: Vec<&str> = s.split(&sep).collect();
+                let mut results: Vec<Option<Value>> = parts.iter().map(|p| Some(Value::String(p.to_string()))).collect();
+                if let Some(lim) = limit {
+                    results.truncate(lim);
+                }
+                let obj = Object::with_internal(Internal::Array(results));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
+            }
+            "String.prototype.startsWith" => {
+                let s = self.this_str(&this_value);
+                let needle = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let pos = args.get(1).map(|v| v.to_number() as usize).unwrap_or(0);
+                if pos > s.len() {
+                    Ok(Value::Bool(false))
+                } else {
+                    Ok(Value::Bool(s[pos..].starts_with(&needle)))
+                }
+            }
+            "String.prototype.endsWith" => {
+                let s = self.this_str(&this_value);
+                let needle = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let end = args.get(1).map(|v| v.to_number() as usize).unwrap_or(s.len());
+                let end = end.min(s.len());
+                if needle.len() > end {
+                    Ok(Value::Bool(false))
+                } else {
+                    Ok(Value::Bool(s[..end].ends_with(&needle)))
+                }
+            }
+            "String.prototype.includes" => {
+                let s = self.this_str(&this_value);
+                let needle = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let pos = args.get(1).map(|v| v.to_number() as usize).unwrap_or(0);
+                if pos > s.len() {
+                    Ok(Value::Bool(false))
+                } else {
+                    Ok(Value::Bool(s[pos..].contains(&needle)))
+                }
+            }
+            "String.prototype.repeat" => {
+                let s = self.this_str(&this_value);
+                let count = args.first().map(|v| v.to_number()).unwrap_or(0.0);
+                if count < 0.0 || count.is_infinite() {
+                    return Err(JsError::range_error("repeat count must be non-negative finite"));
+                }
+                let count = count as usize;
+                Ok(Value::String(s.repeat(count)))
+            }
+            "String.prototype.padStart" => {
+                let s = self.this_str(&this_value);
+                let max_len = args.first().map(|v| v.to_number()).unwrap_or(0.0) as usize;
+                let pad = args.get(1).cloned().unwrap_or(Value::String(" ".into())).to_string();
+                if s.len() >= max_len {
+                    Ok(Value::String(s))
+                } else {
+                    let need = max_len - s.len();
+                    let pad_repeat = pad.repeat((need / pad.len()) + 1);
+                    Ok(Value::String(format!("{}{}", &pad_repeat[..need], s)))
+                }
+            }
+            "String.prototype.padEnd" => {
+                let s = self.this_str(&this_value);
+                let max_len = args.first().map(|v| v.to_number()).unwrap_or(0.0) as usize;
+                let pad = args.get(1).cloned().unwrap_or(Value::String(" ".into())).to_string();
+                if s.len() >= max_len {
+                    Ok(Value::String(s))
+                } else {
+                    let need = max_len - s.len();
+                    let pad_repeat = pad.repeat((need / pad.len()) + 1);
+                    Ok(Value::String(format!("{}{}", s, &pad_repeat[..need])))
+                }
+            }
+            "String.fromCharCode" => {
+                let mut result = String::new();
+                for arg in &args {
+                    if let Ok(c) = u32::try_from(arg.to_number() as i64) {
+                        if let Some(ch) = char::from_u32(c) {
+                            result.push(ch);
+                        }
+                    }
+                }
+                Ok(Value::String(result))
+            }
             _ => {
                 if let Some(func) = construct {
                     let obj = Object::plain();
@@ -2039,6 +2379,21 @@ impl Interpreter {
             return;
         }
         self.output.push(text);
+    }
+
+    fn this_str(&self, this_value: &Value) -> String {
+        match this_value {
+            Value::String(s) => s.clone(),
+            Value::Object(o) => {
+                let obj = o.borrow();
+                if let Some(Value::String(s)) = obj.props.get("value") {
+                    s.clone()
+                } else {
+                    this_value.to_string()
+                }
+            }
+            _ => this_value.to_string(),
+        }
     }
 }
 

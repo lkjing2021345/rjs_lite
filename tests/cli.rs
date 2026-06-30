@@ -344,6 +344,190 @@ fn array_from_creates_array_from_array_like() {
 
 // --- end Array method tests ---
 
+// --- String.prototype method tests ---
+
+#[test]
+fn string_slice_returns_substring() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello world'.slice(1,5);"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ello");
+}
+
+#[test]
+fn string_substring_returns_substring() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello'.substring(1,4);"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ell");
+}
+
+#[test]
+fn string_index_of_finds_position() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello'.indexOf('l');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "2");
+}
+
+#[test]
+fn string_index_of_not_found_returns_minus_one() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello'.indexOf('z');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "-1");
+}
+
+#[test]
+fn string_char_at_returns_character() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello'.charAt(1);"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "e");
+}
+
+#[test]
+fn string_trim_removes_whitespace() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'  hello  '.trim();"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
+}
+
+#[test]
+fn string_to_upper_case_works() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello'.toUpperCase();"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "HELLO");
+}
+
+#[test]
+fn string_to_lower_case_works() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'HELLO'.toLowerCase();"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello");
+}
+
+#[test]
+fn string_concat_joins_strings() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello'.concat(' ', 'world');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hello world");
+}
+
+#[test]
+fn string_replace_first_occurrence() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello world'.replace('hello', 'hi');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hi world");
+}
+
+#[test]
+fn string_split_returns_array() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'a,b,c'.split(',').join('-');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "a-b-c");
+}
+
+#[test]
+fn string_starts_with_checks_prefix() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello'.startsWith('he');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+}
+
+#[test]
+fn string_ends_with_checks_suffix() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello'.endsWith('lo');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+}
+
+#[test]
+fn string_includes_checks_substring() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello'.includes('ell');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+}
+
+#[test]
+fn string_repeat_repeats() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'ab'.repeat(3);"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ababab");
+}
+
+#[test]
+fn string_pad_start_pads_left() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'5'.padStart(3, '0');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "005");
+}
+
+#[test]
+fn string_pad_end_pads_right() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'5'.padEnd(3, '0');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "500");
+}
+
+#[test]
+fn string_length_property_works() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "'hello'.length;"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "5");
+}
+
+// --- end String method tests ---
+
 #[test]
 fn agent_eval_marks_output_truncated() {
     let source = (0..257)
