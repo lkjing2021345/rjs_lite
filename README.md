@@ -8,6 +8,8 @@ The project is not a wrapper around QuickJS, Boa, V8, Node.js, or Deno. Current 
 
 This repository is a runnable MVP engine scaffold, not a complete ECMAScript implementation. It is designed as a native foundation that can be expanded toward test262 subset coverage and benchmark work.
 
+The active integration and experimental development branch is `test/all-remote-branches`. It combines the local feature branches that are not yet part of `master` and is the branch to use for current standard-library and test262 pass-rate work.
+
 Currently supported:
 
 - Number, string, boolean, `null`, and `undefined` literals
@@ -173,6 +175,8 @@ Innovation path:
 3. Explore agent-oriented host APIs and sandbox controls instead of copying browser-engine assumptions.
 
 ## Development
+
+Current feature work should branch from `test/all-remote-branches`, not `master`, until the integrated standard-library work is promoted. After review, merge the feature branch back into `test/all-remote-branches`, update the relevant docs, and run the validation commands below.
 
 ```bash
 cargo fmt

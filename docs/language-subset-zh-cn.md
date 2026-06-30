@@ -103,3 +103,5 @@ Agent 模式默认应用这些运行限制：
 
 后续 test262 工作应维护子集清单，记录通过/失败分类，并清晰区分已支持语法的失败
 和未支持特性的失败。
+
+在集成标准库工作仍领先于 `master` 时，test262 探索应从 `test/all-remote-branches` 运行。每次运行前应重新构建 release 二进制，避免 runner 使用过期的 lexer 或 parser 行为。

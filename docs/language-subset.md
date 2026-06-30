@@ -110,6 +110,10 @@ These features exist but are intentionally incomplete:
 `test262/` checkout in the repository root and should be used for subset
 tracking, not for claiming full ECMAScript compatibility.
 
+Run test262 exploration from `test/all-remote-branches` while the integrated
+standard-library work remains ahead of `master`. Rebuild the release binary
+before each run so the runner does not execute stale parser or lexer behavior.
+
 Future test262 work should use a maintained subset list, record pass/fail
 categories, and clearly distinguish supported-syntax failures from unsupported
 feature failures.

@@ -66,8 +66,6 @@ let result = runtime.run("print(42);");
 - 只支持已文档化的 MVP JavaScript 子集。
 - Agent 模式会在配置的解释器步数限制后停止执行。
 - Agent 模式会在配置的调用深度限制后停止执行。
-- Agent 模式会在配置的解释器步数限制后停止执行。
-- Agent 模式会在配置的调用深度限制后停止执行。
 - 不声称具备完整 ECMAScript 兼容性。
 - 尚不声称具备 test262 通过率覆盖。
 - 不提供安全沙箱。

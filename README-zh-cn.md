@@ -15,6 +15,8 @@
 3. 提供 Agent 可直接消费的结构化 JSON 执行结果。
 4. 为 test262 接入、对象模型、标准库和性能优化预留清晰演进路线。
 
+当前集成与实验开发基线是 `test/all-remote-branches`。该分支汇总了尚未进入 `master` 的本地功能分支，后续标准库与 test262 通过率提升工作应优先基于该分支推进。
+
 ## 当前支持能力
 
 已支持：
@@ -209,6 +211,8 @@ Agent 工具层同样不调用外部 JS 引擎。`--agent-eval` 只是把本项�
 4. 探索 agent 场景下的宿主 API、沙箱和资源限制能力。
 
 ## 开发与验证
+
+当前功能开发应直接从 `test/all-remote-branches` 创建分支，而不是从 `master` 创建。review 通过后，将功能分支合回 `test/all-remote-branches`，同步更新相关文档，并运行下列验证命令。
 
 格式化代码：
 
