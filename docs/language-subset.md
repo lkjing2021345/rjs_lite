@@ -31,7 +31,8 @@ ECMAScript engine.
   and `Object.values`
 - Placeholder JSON support: `JSON.stringify`
 - Small prototype surface: `Object.prototype.toString`,
-  `Object.prototype.hasOwnProperty`, `Array.prototype.join`,
+  `Object.prototype.hasOwnProperty`,
+  `Object.prototype.propertyIsEnumerable`, `Array.prototype.join`,
   `Array.prototype.map`, `Array.prototype.filter`, `Array.prototype.forEach`,
   and `Array.prototype.push`
 - `Array.prototype.map`, `Array.prototype.filter`, and
@@ -76,6 +77,9 @@ Agent mode applies these default runtime limits:
 These features exist but are intentionally incomplete:
 
 - Object, array, constructor, prototype, and property descriptor semantics
+- Builtin methods are tracked as non-enumerable for `Object.keys`,
+  `Object.values`, `Object.getOwnPropertyDescriptor`, and
+  `Object.prototype.propertyIsEnumerable`
 - Array holes are represented distinctly from explicit `undefined`, but full
   sparse-array behavior is still incomplete
 - JavaScript coercion rules

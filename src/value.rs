@@ -1,6 +1,6 @@
 use crate::ast::Stmt;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
@@ -18,6 +18,7 @@ pub enum Value {
 
 pub struct Object {
     pub props: HashMap<String, Value>,
+    pub non_enumerable_props: HashSet<String>,
     pub proto: Option<ObjectRef>,
     pub internal: Internal,
 }
@@ -39,6 +40,7 @@ impl Object {
     pub fn plain() -> ObjectRef {
         Rc::new(RefCell::new(Object {
             props: HashMap::new(),
+            non_enumerable_props: HashSet::new(),
             proto: None,
             internal: Internal::Plain,
         }))
@@ -47,6 +49,7 @@ impl Object {
     pub fn with_internal(internal: Internal) -> ObjectRef {
         Rc::new(RefCell::new(Object {
             props: HashMap::new(),
+            non_enumerable_props: HashSet::new(),
             proto: None,
             internal,
         }))

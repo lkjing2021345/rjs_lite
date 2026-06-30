@@ -26,7 +26,8 @@ AI Agent 脚本的轻量级 Runtime，而不是完整 ECMAScript 引擎。
   和 `Object.values`
 - 占位 JSON 支持：`JSON.stringify`
 - 小型原型方法面：`Object.prototype.toString`、
-  `Object.prototype.hasOwnProperty`、`Array.prototype.join` 和
+  `Object.prototype.hasOwnProperty`、
+  `Object.prototype.propertyIsEnumerable`、`Array.prototype.join` 和
   `Array.prototype.map`、`Array.prototype.filter`、`Array.prototype.forEach`、
   `Array.prototype.push`
 - `Array.prototype.map`、`Array.prototype.filter` 和
@@ -70,6 +71,9 @@ Agent 模式默认应用这些运行限制：
 以下能力已经存在，但仍是不完整实现：
 
 - 对象、数组、构造器、原型和属性描述符语义
+- 内置方法会以非枚举属性记录，并被 `Object.keys`、`Object.values`、
+  `Object.getOwnPropertyDescriptor` 和
+  `Object.prototype.propertyIsEnumerable` 识别
 - 数组 holes 已经和显式 `undefined` 区分表示，但完整稀疏数组行为仍不完整
 - JavaScript 隐式类型转换规则
 - 标准库行为
