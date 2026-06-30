@@ -46,7 +46,7 @@ impl Env {
     fn assign(&mut self, name: &str, value: Value) -> JsResult<()> {
         if let Some(binding) = self.values.get_mut(name) {
             if !binding.mutable {
-                return Err(JsError::runtime(format!("cannot assign to const `{name}`")));
+                return Err(JsError::type_error(format!("assignment to constant variable `{name}`")));
             }
             binding.value = value;
             return Ok(());
@@ -87,6 +87,7 @@ pub struct Interpreter {
     call_depth: usize,
     output_limit: Option<usize>,
     output_truncated: bool,
+    strict: bool,
 }
 
 impl Interpreter {
@@ -144,6 +145,7 @@ impl Interpreter {
             call_depth: 0,
             output_limit,
             output_truncated: false,
+            strict: false,
         };
         this.install_builtins();
         this
@@ -232,6 +234,11 @@ impl Interpreter {
                 self.native_method("Array.isArray"),
             );
             Self::define_non_enumerable(
+                &array_ctor,
+                "from",
+                self.native_method("Array.from"),
+            );
+            Self::define_non_enumerable(
                 &self.array_proto,
                 "map",
                 self.native_method("Array.prototype.map"),
@@ -280,6 +287,76 @@ impl Interpreter {
                 &self.array_proto,
                 "shift",
                 self.native_method("Array.prototype.shift"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "splice",
+                self.native_method("Array.prototype.splice"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "unshift",
+                self.native_method("Array.prototype.unshift"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "sort",
+                self.native_method("Array.prototype.sort"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "reverse",
+                self.native_method("Array.prototype.reverse"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "concat",
+                self.native_method("Array.prototype.concat"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "reduce",
+                self.native_method("Array.prototype.reduce"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "reduceRight",
+                self.native_method("Array.prototype.reduceRight"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "some",
+                self.native_method("Array.prototype.some"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "every",
+                self.native_method("Array.prototype.every"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "find",
+                self.native_method("Array.prototype.find"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "findIndex",
+                self.native_method("Array.prototype.findIndex"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "fill",
+                self.native_method("Array.prototype.fill"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "flat",
+                self.native_method("Array.prototype.flat"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "lastIndexOf",
+                self.native_method("Array.prototype.lastIndexOf"),
             );
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
@@ -350,11 +427,20 @@ impl Interpreter {
     }
 
     pub fn run(&mut self, program: &Program) -> JsResult<Value> {
+        self.detect_strict_mode(&program.statements);
         match self.eval_statements(&program.statements)? {
             Flow::Value(v) | Flow::Return(v) => Ok(v),
             Flow::Throw(v) => Err(JsError::runtime(v.to_string())),
-            Flow::Break => Err(JsError::runtime("break used outside loop")),
-            Flow::Continue => Err(JsError::runtime("continue used outside loop")),
+            Flow::Break => Err(JsError::syntax_error("break used outside loop")),
+            Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
+        }
+    }
+
+    fn detect_strict_mode(&mut self, statements: &[Stmt]) {
+        if let Some(Stmt::Expr(Expr::String(s))) = statements.first() {
+            if s == "use strict" {
+                self.strict = true;
+            }
         }
     }
 
@@ -608,7 +694,7 @@ impl Interpreter {
                 .env
                 .borrow()
                 .get(name)
-                .ok_or_else(|| JsError::runtime(format!("undefined variable `{name}`"))),
+                .ok_or_else(|| JsError::reference_error(format!("{name} is not defined"))),
             Expr::Array(items) => {
                 let values = items
                     .iter()
@@ -753,7 +839,14 @@ impl Interpreter {
                     Ok((Value::Undefined, object_value))
                 }
             }
-            _ => Ok((self.eval_expr(expr)?, Value::Object(self.global.clone()))),
+            _ => {
+                let this = if self.strict {
+                    Value::Undefined
+                } else {
+                    Value::Object(self.global.clone())
+                };
+                Ok((self.eval_expr(expr)?, this))
+            }
         }
     }
 
@@ -767,7 +860,7 @@ impl Interpreter {
                         property: property.clone(),
                     })
                 } else {
-                    Err(JsError::runtime("member access on non-object"))
+                    Err(JsError::type_error("member access on non-object"))
                 }
             }
             Expr::Index { object, index } => {
@@ -779,10 +872,10 @@ impl Interpreter {
                         property,
                     })
                 } else {
-                    Err(JsError::runtime("index access on non-object"))
+                    Err(JsError::type_error("index access on non-object"))
                 }
             }
-            _ => Err(JsError::runtime("target is not a reference")),
+            _ => Err(JsError::type_error("target is not a reference")),
         }
     }
 
@@ -792,7 +885,7 @@ impl Interpreter {
                 .env
                 .borrow()
                 .get(name)
-                .ok_or_else(|| JsError::runtime(format!("undefined variable `{name}`"))),
+                .ok_or_else(|| JsError::reference_error(format!("{name} is not defined"))),
             Expr::Member { .. } | Expr::Index { .. } => {
                 let r = self.get_ref(target)?;
                 Ok(self.get_property(&r.object, &r.property))
@@ -809,7 +902,7 @@ impl Interpreter {
                 self.set_property(&r.object, &r.property, value);
                 Ok(())
             }
-            _ => Err(JsError::runtime("target is not assignable")),
+            _ => Err(JsError::type_error("target is not assignable")),
         }
     }
 
@@ -923,8 +1016,10 @@ impl Interpreter {
             BinaryOp::Multiply => Ok(Value::Number(left.to_number() * right.to_number())),
             BinaryOp::Divide => Ok(Value::Number(left.to_number() / right.to_number())),
             BinaryOp::Remainder => Ok(Value::Number(left.to_number() % right.to_number())),
-            BinaryOp::Equal | BinaryOp::StrictEqual => Ok(Value::Bool(left == right)),
-            BinaryOp::NotEqual | BinaryOp::StrictNotEqual => Ok(Value::Bool(left != right)),
+            BinaryOp::Equal => Ok(Value::Bool(left.abstract_eq(&right))),
+            BinaryOp::NotEqual => Ok(Value::Bool(!left.abstract_eq(&right))),
+            BinaryOp::StrictEqual => Ok(Value::Bool(left == right)),
+            BinaryOp::StrictNotEqual => Ok(Value::Bool(left != right)),
             BinaryOp::Less => Ok(Value::Bool(left.to_number() < right.to_number())),
             BinaryOp::LessEqual => Ok(Value::Bool(left.to_number() <= right.to_number())),
             BinaryOp::Greater => Ok(Value::Bool(left.to_number() > right.to_number())),
@@ -962,8 +1057,8 @@ impl Interpreter {
         construct: bool,
     ) -> JsResult<Value> {
         let Value::Object(func) = callee else {
-            return Err(JsError::runtime(format!(
-                "{} is not callable",
+            return Err(JsError::type_error(format!(
+                "{} is not a function",
                 callee.type_name()
             )));
         };
@@ -1020,11 +1115,11 @@ impl Interpreter {
                         }
                     }
                     Flow::Throw(v) => Ok(v).and_then(|v| Err(JsError::runtime(v.to_string()))),
-                    Flow::Break => Err(JsError::runtime("break used outside loop")),
-                    Flow::Continue => Err(JsError::runtime("continue used outside loop")),
+                    Flow::Break => Err(JsError::syntax_error("break used outside loop")),
+                    Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
                 }
             }
-            _ => Err(JsError::runtime("object is not callable")),
+            _ => Err(JsError::type_error("object is not a function")),
         }
     }
 
@@ -1070,7 +1165,7 @@ impl Interpreter {
             }
             "Object.keys" => {
                 let Some(Value::Object(object)) = args.first().cloned() else {
-                    return Err(JsError::runtime("Object.keys expects object"));
+                    return Err(JsError::type_error("Object.keys expects object"));
                 };
                 let object = object.borrow();
                 let mut keys = Vec::new();
@@ -1098,23 +1193,41 @@ impl Interpreter {
             }
             "Object.defineProperty" => {
                 let Some(Value::Object(target)) = args.first().cloned() else {
-                    return Err(JsError::runtime("Object.defineProperty expects object"));
+                    return Err(JsError::type_error("Object.defineProperty expects object"));
                 };
                 let key = args.get(1).cloned().unwrap_or(Value::Undefined).to_string();
                 let Some(Value::Object(descriptor)) = args.get(2).cloned() else {
-                    return Err(JsError::runtime(
+                    return Err(JsError::type_error(
                         "Object.defineProperty expects descriptor object",
                     ));
                 };
                 let value = descriptor.borrow().props.get("value").cloned();
+                let writable = descriptor
+                    .borrow()
+                    .props
+                    .get("writable")
+                    .map_or(true, |v| v.is_truthy());
+                let enumerable = descriptor
+                    .borrow()
+                    .props
+                    .get("enumerable")
+                    .map_or(false, |v| v.is_truthy());
                 if let Some(value) = value {
                     self.set_property(&target, &key, value);
+                    if !writable {
+                        let mut target = target.borrow_mut();
+                        target.non_enumerable_props.insert("__writable_".to_string() + &key);
+                    }
+                    if !enumerable {
+                        let mut target = target.borrow_mut();
+                        target.non_enumerable_props.insert(key.clone());
+                    }
                 }
                 Ok(Value::Object(target))
             }
             "Object.getOwnPropertyDescriptor" => {
                 let Some(Value::Object(object)) = args.first().cloned() else {
-                    return Err(JsError::runtime(
+                    return Err(JsError::type_error(
                         "Object.getOwnPropertyDescriptor expects object",
                     ));
                 };
@@ -1130,12 +1243,12 @@ impl Interpreter {
                         Ok(Value::Object(obj))
                     }
                     Value::Null => Ok(Value::Object(obj)),
-                    _ => Err(JsError::runtime("Object.create expects object or null")),
+                    _ => Err(JsError::type_error("Object.create expects object or null")),
                 }
             }
             "Object.getPrototypeOf" => {
                 let Some(Value::Object(object)) = args.first().cloned() else {
-                    return Err(JsError::runtime("Object.getPrototypeOf expects object"));
+                    return Err(JsError::type_error("Object.getPrototypeOf expects object"));
                 };
                 Ok(object
                     .borrow()
@@ -1189,7 +1302,7 @@ impl Interpreter {
             )),
             "Object.values" => {
                 let Some(Value::Object(object)) = args.first().cloned() else {
-                    return Err(JsError::runtime("Object.values expects object"));
+                    return Err(JsError::type_error("Object.values expects object"));
                 };
                 let object = object.borrow();
                 let mut values = Vec::new();
@@ -1489,6 +1602,393 @@ impl Interpreter {
                     }
                 }
                 Ok(Value::Undefined)
+            }
+            "Array.prototype.splice" => {
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                {
+                    let len = items.len();
+                    let start = args
+                        .first()
+                        .map(|v| v.to_number())
+                        .unwrap_or(0.0);
+                    let start = if start < 0.0 {
+                        ((len as f64) + start).max(0.0) as usize
+                    } else {
+                        (start as usize).min(len)
+                    };
+                    let delete_count = args
+                        .get(1)
+                        .map(|v| v.to_number())
+                        .unwrap_or(len as f64);
+                    let delete_count = if delete_count.is_nan() || delete_count < 0.0 {
+                        0
+                    } else {
+                        (delete_count as usize).min(len - start)
+                    };
+                    let removed: Vec<Option<Value>> = items.splice(start..start + delete_count, args.iter().skip(2).cloned().map(Some)).collect();
+                    let removed_values: Vec<Option<Value>> = removed.into_iter().collect();
+                    let obj = Object::with_internal(Internal::Array(removed_values));
+                    obj.borrow_mut().proto = Some(self.array_proto.clone());
+                    return Ok(Value::Object(obj));
+                }
+                let obj = Object::with_internal(Internal::Array(Vec::new()));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
+            }
+            "Array.prototype.unshift" => {
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                {
+                    let head: Vec<Option<Value>> = args.into_iter().map(Some).collect();
+                    items.splice(0..0, head);
+                    return Ok(Value::Number(items.len() as f64));
+                }
+                Ok(Value::Number(0.0))
+            }
+            "Array.prototype.sort" => {
+                let compare_fn = args.first().cloned();
+                let items = if let Value::Object(ref o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    items.clone()
+                } else {
+                    return Ok(this_value);
+                };
+                let mut items = items;
+                if let Some(ref cmp) = compare_fn {
+                    let mut scratch = Vec::new();
+                    for item in &items {
+                        scratch.push(item.clone());
+                    }
+                    scratch.sort_by(|a, b| {
+                        let a = a.clone().unwrap_or(Value::Undefined);
+                        let b = b.clone().unwrap_or(Value::Undefined);
+                        if let Ok(result) = self.call(cmp.clone(), vec![a, b], Value::Object(self.global.clone()), false) {
+                            let n = result.to_number();
+                            if n < 0.0 { return std::cmp::Ordering::Less; }
+                            if n > 0.0 { return std::cmp::Ordering::Greater; }
+                        }
+                        std::cmp::Ordering::Equal
+                    });
+                    items = scratch;
+                } else {
+                    items.sort_by(|a, b| {
+                        let a = a.clone().unwrap_or(Value::Undefined);
+                        let b = b.clone().unwrap_or(Value::Undefined);
+                        a.to_string().cmp(&b.to_string())
+                    });
+                }
+                if let Value::Object(ref o) = this_value
+                    && let Internal::Array(arr) = &mut o.borrow_mut().internal
+                {
+                    *arr = items;
+                    return Ok(Value::Object(o.clone()));
+                }
+                Ok(this_value)
+            }
+            "Array.prototype.reverse" => {
+                if let Value::Object(ref o) = this_value
+                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                {
+                    items.reverse();
+                    return Ok(Value::Object(o.clone()));
+                }
+                Ok(this_value)
+            }
+            "Array.prototype.concat" => {
+                let mut result: Vec<Option<Value>> = Vec::new();
+                if let Value::Object(ref o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    result.extend(items.iter().cloned());
+                } else {
+                    result.push(Some(this_value));
+                }
+                for arg in &args {
+                    if let Value::Object(o) = arg
+                        && let Internal::Array(items) = &o.borrow().internal
+                    {
+                        result.extend(items.iter().cloned());
+                    } else {
+                        result.push(Some(arg.clone()));
+                    }
+                }
+                let obj = Object::with_internal(Internal::Array(result));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
+            }
+            "Array.prototype.reduce" => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                let has_initial = args.len() > 1;
+                let initial = args.get(1).cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = this_value {
+                    let source_array = Value::Object(o.clone());
+                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let mut accumulator = if has_initial {
+                        initial
+                    } else {
+                        items.first().cloned().flatten().unwrap_or(Value::Undefined)
+                    };
+                    let start = if has_initial { 0 } else { 1 };
+                    for (index, value) in items.iter().enumerate().skip(start) {
+                        accumulator = self.call(
+                            callback.clone(),
+                            vec![accumulator, value.clone().unwrap_or(Value::Undefined), Value::Number(index as f64), source_array.clone()],
+                            Value::Object(self.global.clone()),
+                            false,
+                        )?;
+                    }
+                    return Ok(accumulator);
+                }
+                Err(JsError::type_error("reduce requires array"))
+            }
+            "Array.prototype.reduceRight" => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                let has_initial = args.len() > 1;
+                let initial = args.get(1).cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = this_value {
+                    let source_array = Value::Object(o.clone());
+                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let len = items.len();
+                    let mut accumulator = if has_initial {
+                        initial
+                    } else if len > 0 {
+                        items.last().cloned().flatten().unwrap_or(Value::Undefined)
+                    } else {
+                        return Err(JsError::type_error("reduceRight requires array with at least one element"));
+                    };
+                    let start = if has_initial { len as isize - 1 } else { len as isize - 2 };
+                    for i in (0..=start).rev() {
+                        if i < 0 { break; }
+                        let i = i as usize;
+                        accumulator = self.call(
+                            callback.clone(),
+                            vec![accumulator, items[i].clone().unwrap_or(Value::Undefined), Value::Number(i as f64), source_array.clone()],
+                            Value::Object(self.global.clone()),
+                            false,
+                        )?;
+                    }
+                    return Ok(accumulator);
+                }
+                Err(JsError::type_error("reduceRight requires array"))
+            }
+            "Array.prototype.some" => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = this_value {
+                    let source_array = Value::Object(o.clone());
+                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    for (index, value) in items.iter().enumerate() {
+                        let val = value.clone().unwrap_or(Value::Undefined);
+                        if self.call(
+                            callback.clone(),
+                            vec![val, Value::Number(index as f64), source_array.clone()],
+                            Value::Object(self.global.clone()),
+                            false,
+                        )?.is_truthy() {
+                            return Ok(Value::Bool(true));
+                        }
+                    }
+                    return Ok(Value::Bool(false));
+                }
+                Ok(Value::Bool(false))
+            }
+            "Array.prototype.every" => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = this_value {
+                    let source_array = Value::Object(o.clone());
+                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    for (index, value) in items.iter().enumerate() {
+                        let val = value.clone().unwrap_or(Value::Undefined);
+                        if !self.call(
+                            callback.clone(),
+                            vec![val, Value::Number(index as f64), source_array.clone()],
+                            Value::Object(self.global.clone()),
+                            false,
+                        )?.is_truthy() {
+                            return Ok(Value::Bool(false));
+                        }
+                    }
+                    return Ok(Value::Bool(true));
+                }
+                Ok(Value::Bool(true))
+            }
+            "Array.prototype.find" => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = this_value {
+                    let source_array = Value::Object(o.clone());
+                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    for (index, value) in items.iter().enumerate() {
+                        let val = value.clone().unwrap_or(Value::Undefined);
+                        if self.call(
+                            callback.clone(),
+                            vec![val.clone(), Value::Number(index as f64), source_array.clone()],
+                            Value::Object(self.global.clone()),
+                            false,
+                        )?.is_truthy() {
+                            return Ok(val);
+                        }
+                    }
+                    return Ok(Value::Undefined);
+                }
+                Ok(Value::Undefined)
+            }
+            "Array.prototype.findIndex" => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = this_value {
+                    let source_array = Value::Object(o.clone());
+                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    for (index, value) in items.iter().enumerate() {
+                        let val = value.clone().unwrap_or(Value::Undefined);
+                        if self.call(
+                            callback.clone(),
+                            vec![val, Value::Number(index as f64), source_array.clone()],
+                            Value::Object(self.global.clone()),
+                            false,
+                        )?.is_truthy() {
+                            return Ok(Value::Number(index as f64));
+                        }
+                    }
+                    return Ok(Value::Number(-1.0));
+                }
+                Ok(Value::Number(-1.0))
+            }
+            "Array.prototype.fill" => {
+                let fill_value = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(ref o) = this_value
+                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                {
+                    let len = items.len() as isize;
+                    let start = args.get(1).map(|v| v.to_number()).unwrap_or(0.0);
+                    let start = Self::array_slice_bound(start, len);
+                    let end = args.get(2).map(|v| v.to_number()).unwrap_or(len as f64);
+                    let end = Self::array_slice_bound(end, len);
+                    for i in start..end {
+                        if (i as usize) < items.len() {
+                            items[i as usize] = Some(fill_value.clone());
+                        }
+                    }
+                    return Ok(Value::Object(o.clone()));
+                }
+                Ok(this_value)
+            }
+            "Array.prototype.flat" => {
+                let depth = args.first().map(|v| v.to_number()).unwrap_or(1.0);
+                let src_items = if let Value::Object(ref o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    items.clone()
+                } else {
+                    Vec::new()
+                };
+                fn flatten(items: &[Option<Value>], depth: f64) -> Vec<Option<Value>> {
+                    let mut result = Vec::new();
+                    for item in items {
+                        if let Some(Value::Object(o)) = item
+                            && let Internal::Array(inner) = &o.borrow().internal
+                            && depth > 0.0
+                        {
+                            result.extend(flatten(inner, depth - 1.0));
+                        } else {
+                            result.push(item.clone());
+                        }
+                    }
+                    result
+                }
+                let flattened = flatten(&src_items, depth);
+                let obj = Object::with_internal(Internal::Array(flattened));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
+            }
+            "Array.prototype.lastIndexOf" => {
+                let needle = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    let len = items.len() as isize;
+                    let from_index = args.get(1).map(|v| v.to_number()).unwrap_or(len as f64);
+                    let mut start = if from_index.is_nan() {
+                        len - 1
+                    } else if from_index < 0.0 {
+                        len + from_index as isize
+                    } else {
+                        (from_index as isize).min(len - 1)
+                    };
+                    if start < 0 { start = -1; }
+                    for i in (0..=start).rev() {
+                        if i < 0 { break; }
+                        let i = i as usize;
+                        if i < items.len() && items[i].as_ref().is_some_and(|v| *v == needle) {
+                            return Ok(Value::Number(i as f64));
+                        }
+                    }
+                }
+                Ok(Value::Number(-1.0))
+            }
+            "Array.from" => {
+                let callback = if args.len() > 1 {
+                    args.get(1).cloned()
+                } else {
+                    None
+                };
+                let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
+                let mut result = Vec::new();
+                let source = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = &source {
+                    let length = if let Internal::Array(items) = &o.borrow().internal {
+                        items.len()
+                    } else {
+                        o.borrow()
+                            .props
+                            .get("length")
+                            .map(|v| v.to_number() as usize)
+                            .unwrap_or(0)
+                    };
+                    for i in 0..length {
+                        let val = if let Internal::Array(items) = &o.borrow().internal {
+                            items.get(i).cloned().flatten().unwrap_or(Value::Undefined)
+                        } else {
+                            o.borrow()
+                                .props
+                                .get(&i.to_string())
+                                .cloned()
+                                .unwrap_or(Value::Undefined)
+                        };
+                        let val = if let Some(ref cb) = callback {
+                            self.call(cb.clone(), vec![val, Value::Number(i as f64)], this_arg.clone(), false)?
+                        } else {
+                            val
+                        };
+                        result.push(Some(val));
+                    }
+                }
+                let obj = Object::with_internal(Internal::Array(result));
+                obj.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(obj))
             }
             _ => {
                 if let Some(func) = construct {

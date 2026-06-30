@@ -139,6 +139,70 @@ impl Value {
             Value::Object(_) => f64::NAN,
         }
     }
+
+    pub fn to_primitive(&self) -> Value {
+        match self {
+            Value::Object(o) => {
+                let obj = o.borrow();
+                if let Some(v) = obj.props.get("valueOf") {
+                    if v.is_callable() {
+                        return Value::Undefined;
+                    }
+                }
+                if let Some(v) = obj.props.get("toString") {
+                    if v.is_callable() {
+                        return Value::Undefined;
+                    }
+                }
+                match &obj.internal {
+                    Internal::Array(items) => {
+                        let parts: Vec<String> = items
+                            .iter()
+                            .map(|v| match v {
+                                Some(Value::Null | Value::Undefined) | None => String::new(),
+                                Some(other) => other.to_string(),
+                            })
+                            .collect();
+                        Value::String(parts.join(","))
+                    }
+                    Internal::Function { .. } | Internal::Native(_) => {
+                        Value::String("function () { [native code] }".into())
+                    }
+                    Internal::Plain => Value::String("[object Object]".into()),
+                }
+            }
+            other => other.clone(),
+        }
+    }
+
+    pub fn abstract_eq(&self, other: &Value) -> bool {
+        if std::mem::discriminant(self) == std::mem::discriminant(other) {
+            return self == other;
+        }
+        if matches!((self, other), (Value::Null, Value::Undefined) | (Value::Undefined, Value::Null))
+        {
+            return true;
+        }
+        if let (Value::Number(a), Value::String(b)) = (self, other) {
+            return *a == Value::String(b.clone()).to_number();
+        }
+        if let (Value::String(a), Value::Number(b)) = (self, other) {
+            return Value::String(a.clone()).to_number() == *b;
+        }
+        if let Value::Bool(b) = self {
+            return Value::Number(if *b { 1.0 } else { 0.0 }).abstract_eq(other);
+        }
+        if let Value::Bool(b) = other {
+            return self.abstract_eq(&Value::Number(if *b { 1.0 } else { 0.0 }));
+        }
+        if matches!(self, Value::String(_) | Value::Number(_)) && matches!(other, Value::Object(_)) {
+            return self.abstract_eq(&other.to_primitive());
+        }
+        if matches!(self, Value::Object(_)) && matches!(other, Value::String(_) | Value::Number(_)) {
+            return self.to_primitive().abstract_eq(other);
+        }
+        false
+    }
 }
 
 impl PartialEq for Value {

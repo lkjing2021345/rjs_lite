@@ -169,10 +169,10 @@ impl From<&JsError> for AgentErrorKind {
         match error {
             JsError::Lex { .. } => Self::Lex,
             JsError::Parse { .. } => Self::Parse,
-            JsError::Runtime { message } if message.contains("execution step limit exceeded") => {
+            JsError::Runtime { message, .. } if message.contains("execution step limit exceeded") => {
                 Self::StepLimit
             }
-            JsError::Runtime { message } if message.contains("call depth limit exceeded") => {
+            JsError::Runtime { message, .. } if message.contains("call depth limit exceeded") => {
                 Self::CallDepthLimit
             }
             JsError::Runtime { .. } => Self::Runtime,

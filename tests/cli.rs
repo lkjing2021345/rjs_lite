@@ -140,6 +140,210 @@ fn agent_eval_emits_array_filter_result() {
     assert!(stdout.contains("\"value_type\":\"string\""));
 }
 
+// --- Array.prototype method tests ---
+
+#[test]
+fn array_splice_removes_and_inserts() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "let a=[1,2,3,4]; a.splice(1,2,9,10); a.join(',') + ':' + [1,2,3,4].splice(1,2,9,10).join(',');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1,9,10,4:2,3");
+}
+
+#[test]
+fn array_unshift_prepends_items() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "let a=[3,4]; a.unshift(1,2); a.join(',');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1,2,3,4");
+}
+
+#[test]
+fn array_sort_default_string_order() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "let a=[3,1,2]; a.sort(); a.join(',');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1,2,3");
+}
+
+#[test]
+fn array_sort_with_comparator() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "let a=[3,1,2]; a.sort(function(x,y){return x-y;}); a.join(',');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1,2,3");
+}
+
+#[test]
+fn array_reverse_reverses_in_place() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "let a=[1,2,3]; a.reverse(); a.join(',');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3,2,1");
+}
+
+#[test]
+fn array_concat_joins_arrays() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2].concat([3,4]).join(',');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1,2,3,4");
+}
+
+#[test]
+fn array_reduce_sums_values() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3,4].reduce(function(a,b){return a+b;},0);"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "10");
+}
+
+#[test]
+fn array_reduce_without_initial() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3].reduce(function(a,b){return a+b;});"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "6");
+}
+
+#[test]
+fn array_reduce_right_subtracts_right_to_left() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3].reduceRight(function(a,b){return a-b;});"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
+}
+
+#[test]
+fn array_some_returns_true_when_any_matches() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3].some(function(x){return x>2;});"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+}
+
+#[test]
+fn array_some_returns_false_when_none_matches() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3].some(function(x){return x>5;});"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "false");
+}
+
+#[test]
+fn array_every_returns_true_when_all_match() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3].every(function(x){return x>0;});"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+}
+
+#[test]
+fn array_every_returns_false_when_any_fails() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3].every(function(x){return x>1;});"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "false");
+}
+
+#[test]
+fn array_find_returns_first_matching_value() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3,4].find(function(x){return x>2;});"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3");
+}
+
+#[test]
+fn array_find_returns_undefined_when_no_match() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3].find(function(x){return x>5;});"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).trim().is_empty());
+}
+
+#[test]
+fn array_find_index_returns_index_of_first_match() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3,4].findIndex(function(x){return x>2;});"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "2");
+}
+
+#[test]
+fn array_fill_fills_range() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "let a=[1,2,3,4]; a.fill(0,1,3); a.join(',');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1,0,0,4");
+}
+
+#[test]
+fn array_flat_flattens_nested_arrays() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,[2,3],[4,[5,6]]].flat().join(',');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1,2,3,4,5,6");
+}
+
+#[test]
+fn array_last_index_of_finds_last_index() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "[1,2,3,2,1].lastIndexOf(2);"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3");
+}
+
+#[test]
+fn array_from_creates_array_from_array_like() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "Array.from([1,2,3]).join(',');"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1,2,3");
+}
+
+// --- end Array method tests ---
+
 #[test]
 fn agent_eval_marks_output_truncated() {
     let source = (0..257)
@@ -412,8 +616,8 @@ fn repl_dot_reset_clears_state() {
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("undefined variable"),
-        "should show undefined variable error: {stderr}"
+        stderr.contains("is not defined"),
+        "should show reference error: {stderr}"
     );
 }
 
