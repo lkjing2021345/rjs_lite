@@ -276,6 +276,11 @@ impl Interpreter {
                 "pop",
                 self.native_method("Array.prototype.pop"),
             );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "shift",
+                self.native_method("Array.prototype.shift"),
+            );
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
             Self::define_non_enumerable(&string_ctor, "prototype", Value::Object(Object::plain()));
@@ -1372,6 +1377,17 @@ impl Interpreter {
                 }
                 Ok(Value::Undefined)
             }
+            "Array.prototype.shift" => {
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                {
+                    if items.is_empty() {
+                        return Ok(Value::Undefined);
+                    }
+                    return Ok(items.remove(0).unwrap_or(Value::Undefined));
+                }
+                Ok(Value::Undefined)
+            }
             "Array.prototype.map" => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
@@ -1768,6 +1784,36 @@ mod tests {
     #[test]
     fn array_pop_is_not_enumerable() {
         let src = "Array.prototype.propertyIsEnumerable('pop');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn array_shift_returns_first_item_and_removes_it() {
+        let src = "let a=[1,2,3]; let v=a.shift(); v + ':' + a.join(',');";
+        assert_eq!(run_source(src).unwrap(), Value::String("1:2,3".into()));
+    }
+
+    #[test]
+    fn array_shift_updates_length_and_indices() {
+        let src = "let a=[1,2,3]; a.shift(); a.length + ':' + a[0];";
+        assert_eq!(run_source(src).unwrap(), Value::String("2:2".into()));
+    }
+
+    #[test]
+    fn array_shift_empty_array_returns_undefined() {
+        let src = "let a=[]; a.shift() === undefined && a.length === 0;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_shift_hole_returns_undefined_and_moves_items() {
+        let src = "let a=[]; a.length=2; a[1]=5; a.shift() === undefined && a.length === 1 && a[0] === 5;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_shift_is_not_enumerable() {
+        let src = "Array.prototype.propertyIsEnumerable('shift');";
         assert_eq!(run_source(src).unwrap(), Value::Bool(false));
     }
 
