@@ -528,6 +528,50 @@ fn string_length_property_works() {
 
 // --- end String method tests ---
 
+// --- Function.prototype method tests ---
+
+#[test]
+fn function_call_calls_with_this_arg() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "function add(x){return this.base+x} add.call({base:10}, 5)"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "15");
+}
+
+#[test]
+fn function_apply_calls_with_this_arg() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "function add(x,y){return this.base+x+y} add.apply({base:10}, [1,2])"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "13");
+}
+
+#[test]
+fn function_bind_returns_bound_function() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "function add(x){return this.base+x} var b=add.bind({base:10}); b(5)"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "15");
+}
+
+#[test]
+fn function_bind_prepends_args() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "function add(x,y){return this.base+x+y} var b=add.bind({base:10}, 1); b(2)"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "13");
+}
+
+// --- end Function method tests ---
+
 #[test]
 fn agent_eval_marks_output_truncated() {
     let source = (0..257)

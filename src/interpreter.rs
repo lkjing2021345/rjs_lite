@@ -180,6 +180,21 @@ impl Interpreter {
         self.define_global("JSON", Value::Object(json), false);
 
         self.function_proto.borrow_mut().proto = Some(self.object_proto.clone());
+        Self::define_non_enumerable(
+            &self.function_proto,
+            "call",
+            self.native_method("Function.prototype.call"),
+        );
+        Self::define_non_enumerable(
+            &self.function_proto,
+            "apply",
+            self.native_method("Function.prototype.apply"),
+        );
+        Self::define_non_enumerable(
+            &self.function_proto,
+            "bind",
+            self.native_method("Function.prototype.bind"),
+        );
         self.array_proto.borrow_mut().proto = Some(self.object_proto.clone());
         self.error_proto.borrow_mut().proto = Some(self.object_proto.clone());
         self.string_proto.borrow_mut().proto = Some(self.object_proto.clone());
@@ -1266,6 +1281,15 @@ impl Interpreter {
                     Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
                 }
             }
+            Internal::Bound {
+                target,
+                bound_this,
+                bound_args,
+            } => {
+                let mut combined = bound_args;
+                combined.extend(args);
+                self.call(Value::Object(target), combined, bound_this, construct)
+            }
             _ => Err(JsError::type_error("object is not a function")),
         }
     }
@@ -1381,7 +1405,7 @@ impl Interpreter {
                 let property = args.get(1).cloned().unwrap_or(Value::Undefined).to_string();
                 Ok(self.get_own_property_descriptor(&object, &property))
             }
-            "Object.create" => {
+"Object.create" => {
                 let proto = args.first().cloned().unwrap_or(Value::Undefined);
                 let obj = Object::plain();
                 match proto {
@@ -1392,6 +1416,42 @@ impl Interpreter {
                     Value::Null => Ok(Value::Object(obj)),
                     _ => Err(JsError::type_error("Object.create expects object or null")),
                 }
+            }
+            "Function.prototype.call" => {
+                let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let call_args: Vec<Value> = args.iter().skip(1).cloned().collect();
+                self.call(this_value, call_args, this_arg, false)
+            }
+            "Function.prototype.apply" => {
+                let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let apply_args = if let Some(Value::Object(o)) = args.get(1)
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    items.iter().filter_map(|v| v.clone()).collect()
+                } else if args.len() > 1 {
+                    Vec::new()
+                } else {
+                    Vec::new()
+                };
+                self.call(this_value, apply_args, this_arg, false)
+            }
+            "Function.prototype.bind" => {
+                let Value::Object(target) = this_value else {
+                    return Err(JsError::type_error("bind requires a function"));
+                };
+                let bound_this = args.first().cloned().unwrap_or(Value::Undefined);
+                let bound_args: Vec<Value> = args.iter().skip(1).cloned().collect();
+                let obj = Object::with_internal(Internal::Bound {
+                    target: target.clone(),
+                    bound_this,
+                    bound_args,
+                });
+                obj.borrow_mut().proto = Some(self.function_proto.clone());
+                let proto = Object::plain();
+                proto.borrow_mut().proto = Some(self.object_proto.clone());
+                Self::define_non_enumerable(&proto, "constructor", Value::Object(obj.clone()));
+                Self::define_non_enumerable(&obj, "prototype", Value::Object(proto));
+                Ok(Value::Object(obj))
             }
             "Object.getPrototypeOf" => {
                 let Some(Value::Object(object)) = args.first().cloned() else {

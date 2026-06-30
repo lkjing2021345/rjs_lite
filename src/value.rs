@@ -34,6 +34,11 @@ pub enum Internal {
         body: Vec<Stmt>,
     },
     Native(&'static str),
+    Bound {
+        target: ObjectRef,
+        bound_this: Value,
+        bound_args: Vec<Value>,
+    },
 }
 
 impl Object {
@@ -93,7 +98,7 @@ impl Value {
         matches!(
             self,
             Value::Object(o)
-                if matches!(o.borrow().internal, Internal::Function { .. } | Internal::Native(_))
+                if matches!(o.borrow().internal, Internal::Function { .. } | Internal::Native(_) | Internal::Bound { .. })
         )
     }
 
@@ -115,7 +120,7 @@ impl Value {
             Value::Null => "object",
             Value::Undefined => "undefined",
             Value::Object(o) => match o.borrow().internal {
-                Internal::Function { .. } | Internal::Native(_) => "function",
+                Internal::Function { .. } | Internal::Native(_) | Internal::Bound { .. } => "function",
                 _ => "object",
             },
         }
@@ -165,7 +170,7 @@ impl Value {
                             .collect();
                         Value::String(parts.join(","))
                     }
-                    Internal::Function { .. } | Internal::Native(_) => {
+                    Internal::Function { .. } | Internal::Native(_) | Internal::Bound { .. } => {
                         Value::String("function () { [native code] }".into())
                     }
                     Internal::Plain => Value::String("[object Object]".into()),
@@ -234,7 +239,7 @@ impl fmt::Display for Value {
             Value::Object(o) => {
                 let obj = o.borrow();
                 match &obj.internal {
-                    Internal::Function { .. } | Internal::Native(_) => {
+                    Internal::Function { .. } | Internal::Native(_) | Internal::Bound { .. } => {
                         write!(f, "function () {{ [native code] }}")
                     }
                     Internal::Array(items) => {
