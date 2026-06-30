@@ -21,6 +21,7 @@ AI Agent 脚本的轻量级 Runtime，而不是完整 ECMAScript 引擎。
 - 最小宿主函数：`print(value)`
 - 基础构造器：`Object`、`Array`、`String`、`Number`、`Boolean` 和常见错误构造器
 - 基础工具：`isNaN`
+- 数组工具：`Array.isArray`
 - 对象工具：`Object.create`、`Object.defineProperty`、
   `Object.getOwnPropertyDescriptor`、`Object.getPrototypeOf`、`Object.keys`
   和 `Object.values`

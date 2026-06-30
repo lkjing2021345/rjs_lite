@@ -227,6 +227,11 @@ impl Interpreter {
                 Value::Object(self.array_proto.clone()),
             );
             Self::define_non_enumerable(
+                &array_ctor,
+                "isArray",
+                self.native_method("Array.isArray"),
+            );
+            Self::define_non_enumerable(
                 &self.array_proto,
                 "map",
                 self.native_method("Array.prototype.map"),
@@ -1101,6 +1106,12 @@ impl Interpreter {
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
+            "Array.isArray" => {
+                let is_array = args.first().is_some_and(
+                    |value| matches!(value, Value::Object(object) if matches!(object.borrow().internal, Internal::Array(_))),
+                );
+                Ok(Value::Bool(is_array))
+            }
             "String" => Ok(Value::String(
                 args.first()
                     .cloned()
@@ -1448,6 +1459,24 @@ mod tests {
     #[test]
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_is_array_detects_array_literals_and_constructor_arrays() {
+        let src = "Array.isArray([]) && Array.isArray(Array(1,2));";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_is_array_rejects_plain_objects_and_missing_values() {
+        let src = "(!Array.isArray({})) && (!Array.isArray()) && (!Array.isArray('x'));";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_is_array_is_not_enumerable() {
+        let src = "(!Array.propertyIsEnumerable('isArray')) && Object.keys(Array).length === 0;";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 

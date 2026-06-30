@@ -26,6 +26,7 @@ ECMAScript engine.
 - Basic constructors: `Object`, `Array`, `String`, `Number`, `Boolean`, and
   common error constructors
 - Basic utilities: `isNaN`
+- Array utility: `Array.isArray`
 - Object utilities: `Object.create`, `Object.defineProperty`,
   `Object.getOwnPropertyDescriptor`, `Object.getPrototypeOf`, `Object.keys`,
   and `Object.values`
