@@ -200,6 +200,10 @@ cargo clippy -- -D warnings
 
 [演示视频 (百度网盘)](https://pan.baidu.com/s/1pnkxA2kUiemy8G6XnHSrWA?pwd=3784) 提取码：3784
 
+## Project Slides
+
+[项目进展幻灯片 (PDF)](docs/process/项目进展幻灯片.pdf)
+
 ## Upload Notes
 
 The repository is ready for Gitee upload after verification. Keep `Cargo.lock` committed because this is a binary application. Do not upload `target/`, IDE metadata, logs, or local temp files.
