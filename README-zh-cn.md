@@ -1,5 +1,7 @@
 # rjs_lite：面向 AI Agent 的轻量级 JavaScript 执行 Runtime
 
+[English README](README.md)
+
 `rjs_lite` 是一个面向 AI Agent 工作流的轻量级脚本执行 Runtime。它以 Rust 原生 JavaScript 子集作为第一执行语言，服务于短生命周期、高频本地工具调用、低依赖执行等场景。
 
 本项目不是 QuickJS、Boa、V8、Node.js 或 Deno 的套壳封装。当前代码已经实现自研的词法分析器、语法分析器、AST、运行时值模型、词法作用域环境、树遍历解释器和面向 Agent 的结构化执行结果 API，为后续扩展 ECMAScript 兼容性、test262 测试覆盖率和性能优化打基础。
