@@ -20,7 +20,7 @@ Currently supported:
 - `this` binding, `new`, constructor prototypes, and `instanceof`
 - `throw`, `try`, `catch`, and `finally`
 - Minimal host builtin: `print(value)`
-- Small standard surface: `Object`, `Object.create`, `Object.defineProperty`, `Object.getOwnPropertyDescriptor`, `Object.getPrototypeOf`, `Object.keys`, `Object.values`, `Array`, `Array.isArray`, `String`, `Number`, `Boolean`, `Error` constructors, `isNaN`, placeholder `JSON.stringify`, `Object.prototype.toString`, `Object.prototype.hasOwnProperty`, `Object.prototype.propertyIsEnumerable`, `Array.prototype.map`, `Array.prototype.filter`, `Array.prototype.forEach`, `Array.prototype.indexOf`, `Array.prototype.includes`, `Array.prototype.slice`, `Array.prototype.join`, `Array.prototype.push`, and `Array.prototype.pop`
+- Small standard surface: `Object`, `Object.create`, `Object.defineProperty`, `Object.getOwnPropertyDescriptor`, `Object.getPrototypeOf`, `Object.keys`, `Object.values`, `Array`, `Array.isArray`, `String`, `Number`, `Boolean`, `Error` constructors, `isNaN`, placeholder `JSON.stringify`, `Object.prototype.toString`, `Object.prototype.hasOwnProperty`, `Object.prototype.propertyIsEnumerable`, `Array.prototype.map`, `Array.prototype.filter`, `Array.prototype.forEach`, `Array.prototype.indexOf`, `Array.prototype.includes`, `Array.prototype.slice`, `Array.prototype.join`, `Array.prototype.push`, `Array.prototype.pop`, and `Array.prototype.shift`
 - Interactive REPL with state preservation, multi-line input, and commands
 - CLI execution from inline source or a `.js` file
 - Agent tool mode with structured JSON result output, stable `error_kind` values, source-size limit, output-line limit, execution-step limit, and call-depth limit

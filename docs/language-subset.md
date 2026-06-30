@@ -36,7 +36,7 @@ ECMAScript engine.
   `Object.prototype.propertyIsEnumerable`, `Array.prototype.indexOf`,
   `Array.prototype.includes`, `Array.prototype.slice`, `Array.prototype.join`,
   `Array.prototype.map`, `Array.prototype.filter`, `Array.prototype.forEach`,
-  `Array.prototype.push`, and `Array.prototype.pop`
+  `Array.prototype.push`, `Array.prototype.pop`, and `Array.prototype.shift`
 - `Array.prototype.map`, `Array.prototype.filter`, and
   `Array.prototype.forEach` callbacks receive the current value, zero-based
   index, and source array
