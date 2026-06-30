@@ -1,5 +1,7 @@
 ﻿# rjs_lite: Lightweight Agent JavaScript Execution Runtime
 
+[中文版 README](README-zh-cn.md)
+
 `rjs_lite` is a lightweight script execution runtime for AI agent workflows. Its first execution language is a Rust-native JavaScript subset designed for short-lived, high-frequency local tool calls.
 
 The project is not a wrapper around QuickJS, Boa, V8, Node.js, or Deno. Current code implements its own hand-written lexer, parser, AST, runtime value model, lexical environment, tree-walking interpreter, and agent-facing result API.
