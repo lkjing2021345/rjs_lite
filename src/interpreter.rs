@@ -173,6 +173,15 @@ impl Interpreter {
         self.define_native("Number");
         self.define_native("Boolean");
         self.define_native("isNaN");
+        self.define_native("isFinite");
+        self.define_native("parseInt");
+        self.define_native("parseFloat");
+        self.define_native("eval");
+        self.define_native("Function");
+
+        self.define_global("Infinity", Value::Number(f64::INFINITY), false);
+        self.define_global("NaN", Value::Number(f64::NAN), false);
+        self.define_global("undefined", Value::Undefined, false);
 
         let json = Object::plain();
         json.borrow_mut().proto = Some(self.object_proto.clone());
@@ -637,9 +646,6 @@ impl Interpreter {
             self.define_native(name);
         }
         if let Some(Value::Object(number_ctor)) = self.env.borrow().get("Number") {
-            for name in ["MAX_VALUE", "MIN_VALUE", "NaN", "NEGATIVE_INFINITY", "POSITIVE_INFINITY", "EPSILON", "MAX_SAFE_INTEGER", "MIN_SAFE_INTEGER"] {
-                number_ctor.borrow_mut().props.insert(name.to_string(), Value::Number(f64::NAN));
-            }
             Self::define_non_enumerable(&number_ctor, "MAX_VALUE", Value::Number(f64::MAX));
             Self::define_non_enumerable(&number_ctor, "MIN_VALUE", Value::Number(f64::MIN_POSITIVE));
             Self::define_non_enumerable(&number_ctor, "NaN", Value::Number(f64::NAN));
@@ -1632,6 +1638,61 @@ impl Interpreter {
                     .to_number()
                     .is_nan(),
             )),
+            "isFinite" => Ok(Value::Bool(
+                args.first()
+                    .map(|v| v.to_number().is_finite())
+                    .unwrap_or(false),
+            )),
+            "parseInt" => {
+                let s = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let radix = args.get(1).map(|v| v.to_number() as u32).unwrap_or(10);
+                let s = s.trim();
+                if s.is_empty() { return Ok(Value::Number(f64::NAN)); }
+                match i64::from_str_radix(s, radix) {
+                    Ok(n) => Ok(Value::Number(n as f64)),
+                    Err(_) => Ok(Value::Number(f64::NAN)),
+                }
+            },
+            "parseFloat" => {
+                let s = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let s = s.trim();
+                if s.is_empty() { return Ok(Value::Number(f64::NAN)); }
+                Ok(Value::Number(s.parse::<f64>().unwrap_or(f64::NAN)))
+            },
+            "eval" => {
+                let code = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let tokens = crate::lexer::lex(&code)
+                    .map_err(|e| JsError::syntax_error(e.to_string()))?;
+                let program = crate::parser::parse(tokens)
+                    .map_err(|e| JsError::syntax_error(e.to_string()))?;
+                match self.eval_statements(&program.statements)? {
+                    Flow::Value(v) | Flow::Return(v) => Ok(v),
+                    Flow::Throw(v) => Err(JsError::runtime(v.to_string())),
+                    Flow::Break => Err(JsError::syntax_error("break used outside loop")),
+                    Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
+                }
+            },
+            "Function" => {
+                let body = args.last().cloned().unwrap_or(Value::Undefined).to_string();
+                let params: Vec<String> = args.iter().take(args.len().saturating_sub(1))
+                    .map(|v| v.to_string())
+                    .collect();
+                let code = if params.is_empty() {
+                    body
+                } else {
+                    format!("function({}){{ {} }}", params.join(","), body)
+                };
+                let tokens = crate::lexer::lex(&code)
+                    .map_err(|e| JsError::syntax_error(e.to_string()))?;
+                let program = crate::parser::parse(tokens)
+                    .map_err(|e| JsError::syntax_error(e.to_string()))?;
+                for stmt in &program.statements {
+                    if let Stmt::FunctionDecl { params, body, .. } = stmt {
+                        return Ok(self.make_function(params.clone(), body.clone()));
+                    }
+                }
+                Ok(Value::Undefined)
+            },
             "JSON.stringify" => {
                 let value = args.first().cloned().unwrap_or(Value::Undefined);
                 Ok(Value::String(self.json_stringify(&value)?))
