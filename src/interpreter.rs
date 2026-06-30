@@ -181,6 +181,8 @@ impl Interpreter {
         self.define_native("eval");
         self.define_native("Function");
         self.define_native("RegExp");
+        self.define_native("Map");
+        self.define_native("Reflect");
 
         self.define_global("Infinity", Value::Number(f64::INFINITY), false);
         self.define_global("NaN", Value::Number(f64::NAN), false);
@@ -666,6 +668,24 @@ impl Interpreter {
         Self::define_non_enumerable(&self.boolean_proto, "valueOf", self.native_method("Boolean.prototype.valueOf"));
         Self::define_non_enumerable(&self.error_proto, "toString", self.native_method("Error.prototype.toString"));
         self.define_native("Symbol");
+        if let Some(Value::Object(sym_ctor)) = self.env.borrow().get("Symbol") {
+            let toStringTag = Value::String("Symbol.toStringTag".into());
+            Self::define_non_enumerable(&sym_ctor, "toStringTag", toStringTag.clone());
+            Self::define_non_enumerable(&sym_ctor, "iterator", Value::String("Symbol.iterator".into()));
+            Self::define_non_enumerable(&sym_ctor, "species", Value::String("Symbol.species".into()));
+            Self::define_non_enumerable(&sym_ctor, "toPrimitive", Value::String("Symbol.toPrimitive".into()));
+        }
+        if let Some(Value::Object(map_ctor)) = self.env.borrow().get("Map") {
+            let map_proto = Object::plain();
+            map_proto.borrow_mut().proto = Some(self.object_proto.clone());
+            Self::define_non_enumerable(&map_ctor, "prototype", Value::Object(map_proto.clone()));
+            Self::define_non_enumerable(&map_proto, "get", self.native_method("Map.prototype.get"));
+            Self::define_non_enumerable(&map_proto, "set", self.native_method("Map.prototype.set"));
+            Self::define_non_enumerable(&map_proto, "has", self.native_method("Map.prototype.has"));
+        }
+        if let Some(Value::Object(reflect_obj)) = self.env.borrow().get("Reflect") {
+            Self::define_non_enumerable(&reflect_obj, "ownKeys", self.native_method("Reflect.ownKeys"));
+        }
         Self::define_non_enumerable(&self.array_proto, "entries", self.native_method("Array.prototype.entries"));
         Self::define_non_enumerable(&self.array_proto, "keys", self.native_method("Array.prototype.keys"));
         Self::define_non_enumerable(&self.array_proto, "values", self.native_method("Array.prototype.values"));
@@ -3028,6 +3048,51 @@ impl Interpreter {
                 } else {
                     Ok(Value::Null)
                 }
+            }
+            "Map.prototype.get" => {
+                let key = args.first().cloned().unwrap_or(Value::Undefined);
+                let key_str = key.to_string();
+                if let Value::Object(ref o) = this_value {
+                    let val = o.borrow().props.get(&key_str).cloned().unwrap_or(Value::Undefined);
+                    return Ok(val);
+                }
+                Ok(Value::Undefined)
+            }
+            "Map.prototype.set" => {
+                let key = args.first().cloned().unwrap_or(Value::Undefined);
+                let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+                let key_str = key.to_string();
+                if let Value::Object(ref o) = this_value {
+                    o.borrow_mut().props.insert(key_str, value.clone());
+                }
+                Ok(this_value)
+            }
+            "Map.prototype.has" => {
+                let key = args.first().cloned().unwrap_or(Value::Undefined);
+                let key_str = key.to_string();
+                Ok(Value::Bool(if let Value::Object(ref o) = this_value {
+                    o.borrow().props.contains_key(&key_str)
+                } else { false }))
+            }
+            "Reflect.ownKeys" => {
+                let Some(Value::Object(target)) = args.first().cloned() else {
+                    return Err(JsError::type_error("Reflect.ownKeys expects object"));
+                };
+                let obj = target.borrow();
+                let mut keys: Vec<Option<Value>> = Vec::new();
+                if let Internal::Array(items) = &obj.internal {
+                    for (i, item) in items.iter().enumerate() {
+                        if item.is_some() {
+                            keys.push(Some(Value::String(i.to_string())));
+                        }
+                    }
+                }
+                for key in obj.props.keys() {
+                    keys.push(Some(Value::String(key.clone())));
+                }
+                let arr = Object::with_internal(Internal::Array(keys));
+                arr.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(arr))
             }
             _ => {
                 if let Some(func) = construct {
