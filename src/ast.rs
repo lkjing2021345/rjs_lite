@@ -126,6 +126,7 @@ pub enum UnaryOp {
     Not,
     Delete,
     Void,
+    BitwiseNot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,4 +148,10 @@ pub enum BinaryOp {
     Or,
     In,
     Instanceof,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    LeftShift,
+    RightShift,
+    UnsignedRightShift,
 }

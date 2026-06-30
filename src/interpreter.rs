@@ -1094,6 +1094,9 @@ impl Interpreter {
                         }
                     }
                     UnaryOp::Void => Ok(Value::Undefined),
+                    UnaryOp::BitwiseNot => Ok(Value::Number(
+                        !(value.to_number() as i32) as f64,
+                    )),
                 }
             }
             Expr::Typeof(expr) => match expr.as_ref() {
@@ -1396,6 +1399,24 @@ impl Interpreter {
                 let key = left.to_string();
                 let has = Object::lookup(o, &key).is_some();
                 Ok(Value::Bool(has))
+            }
+            BinaryOp::BitwiseAnd => {
+                Ok(Value::Number((left.to_number() as i32 & right.to_number() as i32) as f64))
+            }
+            BinaryOp::BitwiseOr => {
+                Ok(Value::Number((left.to_number() as i32 | right.to_number() as i32) as f64))
+            }
+            BinaryOp::BitwiseXor => {
+                Ok(Value::Number((left.to_number() as i32 ^ right.to_number() as i32) as f64))
+            }
+            BinaryOp::LeftShift => {
+                Ok(Value::Number(((left.to_number() as i32) << (right.to_number() as u32)) as f64))
+            }
+            BinaryOp::RightShift => {
+                Ok(Value::Number(((left.to_number() as i32) >> (right.to_number() as u32)) as f64))
+            }
+            BinaryOp::UnsignedRightShift => {
+                Ok(Value::Number(((left.to_number() as u32) >> (right.to_number() as u32)) as f64))
             }
             BinaryOp::And | BinaryOp::Or => unreachable!("short-circuited before binary eval"),
         }

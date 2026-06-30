@@ -383,7 +383,7 @@ impl Parser {
 
     fn equality(&mut self) -> JsResult<Expr> {
         self.binary(
-            Self::comparison,
+            Self::bitwise_or,
             &[
                 (TokenKind::Equal, BinaryOp::Equal),
                 (TokenKind::NotEqual, BinaryOp::NotEqual),
@@ -393,9 +393,21 @@ impl Parser {
         )
     }
 
+    fn bitwise_or(&mut self) -> JsResult<Expr> {
+        self.binary(Self::bitwise_xor, &[(TokenKind::Pipe, BinaryOp::BitwiseOr)])
+    }
+
+    fn bitwise_xor(&mut self) -> JsResult<Expr> {
+        self.binary(Self::bitwise_and, &[(TokenKind::Caret, BinaryOp::BitwiseXor)])
+    }
+
+    fn bitwise_and(&mut self) -> JsResult<Expr> {
+        self.binary(Self::comparison, &[(TokenKind::Ampersand, BinaryOp::BitwiseAnd)])
+    }
+
     fn comparison(&mut self) -> JsResult<Expr> {
         self.binary(
-            Self::term,
+            Self::shift,
             &[
                 (TokenKind::Less, BinaryOp::Less),
                 (TokenKind::LessEqual, BinaryOp::LessEqual),
@@ -403,6 +415,17 @@ impl Parser {
                 (TokenKind::GreaterEqual, BinaryOp::GreaterEqual),
                 (TokenKind::In, BinaryOp::In),
                 (TokenKind::Instanceof, BinaryOp::Instanceof),
+            ],
+        )
+    }
+
+    fn shift(&mut self) -> JsResult<Expr> {
+        self.binary(
+            Self::term,
+            &[
+                (TokenKind::LeftShift, BinaryOp::LeftShift),
+                (TokenKind::RightShift, BinaryOp::RightShift),
+                (TokenKind::UnsignedRightShift, BinaryOp::UnsignedRightShift),
             ],
         )
     }
@@ -483,6 +506,11 @@ impl Parser {
             Ok(Expr::New {
                 callee: Box::new(callee),
                 args,
+            })
+        } else if self.eat(&TokenKind::Tilde) {
+            Ok(Expr::Unary {
+                op: UnaryOp::BitwiseNot,
+                expr: Box::new(self.unary()?),
             })
         } else if self.eat(&TokenKind::PlusPlus) {
             let target = self.unary()?;

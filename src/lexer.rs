@@ -50,16 +50,18 @@ impl Lexer {
                 ',' => self.single(TokenKind::Comma),
                 ';' => self.single(TokenKind::Semicolon),
                 '.' => self.single(TokenKind::Dot),
+                '~' => self.single(TokenKind::Tilde),
+                '^' => self.single(TokenKind::Caret),
                 '!' => self.eq_chain(
                     TokenKind::Bang,
                     TokenKind::NotEqual,
                     TokenKind::StrictNotEqual,
                 ),
                 '=' => self.eq_chain(TokenKind::Assign, TokenKind::Equal, TokenKind::StrictEqual),
-                '<' => self.two(TokenKind::Less, '=', TokenKind::LessEqual),
-                '>' => self.two(TokenKind::Greater, '=', TokenKind::GreaterEqual),
-                '&' => self.double('&', TokenKind::And)?,
-                '|' => self.double('|', TokenKind::Or)?,
+                '<' => self.less_than(),
+                '>' => self.greater_than(),
+                '&' => self.ampersand(),
+                '|' => self.pipe(),
                 '/' => self.slash()?,
                 _ => {
                     return Err(JsError::lex(
@@ -153,6 +155,65 @@ impl Lexer {
             double
         } else {
             single
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn ampersand(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = if self.peek() == Some('&') {
+            self.advance();
+            TokenKind::And
+        } else {
+            TokenKind::Ampersand
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn pipe(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = if self.peek() == Some('|') {
+            self.advance();
+            TokenKind::Or
+        } else {
+            TokenKind::Pipe
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn less_than(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = match self.peek() {
+            Some('<') => {
+                self.advance();
+                TokenKind::LeftShift
+            }
+            Some('=') => {
+                self.advance();
+                TokenKind::LessEqual
+            }
+            _ => TokenKind::Less,
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn greater_than(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = match self.peek() {
+            Some('>') => {
+                self.advance();
+                if self.peek() == Some('>') {
+                    self.advance();
+                    TokenKind::UnsignedRightShift
+                } else {
+                    TokenKind::RightShift
+                }
+            }
+            Some('=') => {
+                self.advance();
+                TokenKind::GreaterEqual
+            }
+            _ => TokenKind::Greater,
         };
         self.tokens.push(Token::new(kind, self.span(s, l, c)));
     }
