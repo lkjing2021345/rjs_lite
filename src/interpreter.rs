@@ -134,6 +134,14 @@ impl Interpreter {
                 .borrow_mut()
                 .props
                 .insert("prototype".into(), Value::Object(self.object_proto.clone()));
+            object_ctor
+                .borrow_mut()
+                .props
+                .insert("create".into(), self.native_method("Object.create"));
+            object_ctor.borrow_mut().props.insert(
+                "getPrototypeOf".into(),
+                self.native_method("Object.getPrototypeOf"),
+            );
             self.object_proto.borrow_mut().props.insert(
                 "toString".into(),
                 self.native_method("Object.prototype.toString"),
@@ -826,6 +834,29 @@ impl Interpreter {
                     Ok(Value::Object(obj))
                 }
             }
+            "Object.create" => {
+                let proto = args.first().cloned().unwrap_or(Value::Undefined);
+                let obj = Object::plain();
+                match proto {
+                    Value::Object(proto) => {
+                        obj.borrow_mut().proto = Some(proto);
+                        Ok(Value::Object(obj))
+                    }
+                    Value::Null => Ok(Value::Object(obj)),
+                    _ => Err(JsError::runtime("Object.create expects object or null")),
+                }
+            }
+            "Object.getPrototypeOf" => {
+                let Some(Value::Object(object)) = args.first().cloned() else {
+                    return Err(JsError::runtime("Object.getPrototypeOf expects object"));
+                };
+                Ok(object
+                    .borrow()
+                    .proto
+                    .clone()
+                    .map(Value::Object)
+                    .unwrap_or(Value::Null))
+            }
             "Array" => {
                 let obj = Object::with_internal(Internal::Array(args));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
@@ -982,6 +1013,39 @@ mod tests {
     #[test]
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_create_uses_supplied_prototype() {
+        let src = "let proto={x:7}; let o=Object.create(proto); o.x;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(7.0));
+    }
+
+    #[test]
+    fn object_create_null_has_no_object_prototype() {
+        let src = "let o=Object.create(null); Object.getPrototypeOf(o) === null;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_create_rejects_non_object_prototype() {
+        let err = run_source("Object.create(1);").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Object.create expects object or null")
+        );
+    }
+
+    #[test]
+    fn object_get_prototype_of_returns_object_prototype() {
+        let src = "Object.getPrototypeOf({}) === Object.prototype;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_get_prototype_of_returns_custom_prototype() {
+        let src = "let proto={}; let o=Object.create(proto); Object.getPrototypeOf(o) === proto;";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 
