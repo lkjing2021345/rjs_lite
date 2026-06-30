@@ -152,6 +152,10 @@ impl Interpreter {
                 .borrow_mut()
                 .props
                 .insert("join".into(), self.native_method("Array.prototype.join"));
+            self.array_proto.borrow_mut().props.insert(
+                "indexOf".into(),
+                self.native_method("Array.prototype.indexOf"),
+            );
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
             string_ctor
@@ -890,6 +894,35 @@ impl Interpreter {
                 }
                 Ok(Value::String(String::new()))
             }
+            "Array.prototype.indexOf" => {
+                let needle = args.first().cloned().unwrap_or(Value::Undefined);
+                let from_index = args
+                    .get(1)
+                    .cloned()
+                    .unwrap_or(Value::Number(0.0))
+                    .to_number();
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    let len = items.len() as isize;
+                    let mut start = if from_index.is_nan() {
+                        0
+                    } else if from_index < 0.0 {
+                        len + from_index as isize
+                    } else {
+                        from_index as isize
+                    };
+                    if start < 0 {
+                        start = 0;
+                    }
+                    for (index, value) in items.iter().enumerate().skip(start as usize) {
+                        if *value == needle {
+                            return Ok(Value::Number(index as f64));
+                        }
+                    }
+                }
+                Ok(Value::Number(-1.0))
+            }
             "Array.prototype.map" => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
@@ -983,6 +1016,30 @@ mod tests {
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_index_of_finds_first_matching_value() {
+        let src = "[3,4,3].indexOf(3);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn array_index_of_returns_minus_one_when_missing() {
+        let src = "[1,2].indexOf(3);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(-1.0));
+    }
+
+    #[test]
+    fn array_index_of_uses_positive_from_index() {
+        let src = "[1,2,1].indexOf(1,1);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(2.0));
+    }
+
+    #[test]
+    fn array_index_of_uses_negative_from_index() {
+        let src = "[1,2,3,2].indexOf(2,-2);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(3.0));
     }
 
     #[test]
