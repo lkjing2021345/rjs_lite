@@ -34,7 +34,7 @@ ECMAScript engine.
 - Small prototype surface: `Object.prototype.toString`,
   `Object.prototype.hasOwnProperty`,
   `Object.prototype.propertyIsEnumerable`, `Array.prototype.indexOf`,
-  `Array.prototype.join`,
+  `Array.prototype.includes`, `Array.prototype.join`,
   `Array.prototype.map`, `Array.prototype.filter`, `Array.prototype.forEach`,
   and `Array.prototype.push`
 - `Array.prototype.map`, `Array.prototype.filter`, and
