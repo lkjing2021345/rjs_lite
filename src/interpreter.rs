@@ -285,6 +285,61 @@ impl Interpreter {
                 self.native_method("Object.getPrototypeOf"),
             );
             Self::define_non_enumerable(
+                &object_ctor,
+                "assign",
+                self.native_method("Object.assign"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "entries",
+                self.native_method("Object.entries"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "is",
+                self.native_method("Object.is"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "getOwnPropertyNames",
+                self.native_method("Object.getOwnPropertyNames"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "setPrototypeOf",
+                self.native_method("Object.setPrototypeOf"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "preventExtensions",
+                self.native_method("Object.preventExtensions"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "isExtensible",
+                self.native_method("Object.isExtensible"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "freeze",
+                self.native_method("Object.freeze"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "isFrozen",
+                self.native_method("Object.isFrozen"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "seal",
+                self.native_method("Object.seal"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "isSealed",
+                self.native_method("Object.isSealed"),
+            );
+            Self::define_non_enumerable(
                 &self.object_proto,
                 "toString",
                 self.native_method("Object.prototype.toString"),
@@ -578,6 +633,31 @@ impl Interpreter {
                 );
             }
         }
+        for name in ["Number.isNaN", "Number.isFinite", "Number.parseInt", "Number.parseFloat", "Number.isInteger"] {
+            self.define_native(name);
+        }
+        if let Some(Value::Object(number_ctor)) = self.env.borrow().get("Number") {
+            for name in ["MAX_VALUE", "MIN_VALUE", "NaN", "NEGATIVE_INFINITY", "POSITIVE_INFINITY", "EPSILON", "MAX_SAFE_INTEGER", "MIN_SAFE_INTEGER"] {
+                number_ctor.borrow_mut().props.insert(name.to_string(), Value::Number(f64::NAN));
+            }
+            Self::define_non_enumerable(&number_ctor, "MAX_VALUE", Value::Number(f64::MAX));
+            Self::define_non_enumerable(&number_ctor, "MIN_VALUE", Value::Number(f64::MIN_POSITIVE));
+            Self::define_non_enumerable(&number_ctor, "NaN", Value::Number(f64::NAN));
+            Self::define_non_enumerable(&number_ctor, "NEGATIVE_INFINITY", Value::Number(f64::NEG_INFINITY));
+            Self::define_non_enumerable(&number_ctor, "POSITIVE_INFINITY", Value::Number(f64::INFINITY));
+            Self::define_non_enumerable(&number_ctor, "EPSILON", Value::Number(f64::EPSILON));
+            Self::define_non_enumerable(&number_ctor, "MAX_SAFE_INTEGER", Value::Number(9007199254740991.0));
+            Self::define_non_enumerable(&number_ctor, "MIN_SAFE_INTEGER", Value::Number(-9007199254740991.0));
+            Self::define_non_enumerable(&number_ctor, "toFixed", self.native_method("Number.prototype.toFixed"));
+            Self::define_non_enumerable(&number_ctor, "toString", self.native_method("Number.prototype.toString"));
+        }
+        Self::define_non_enumerable(&self.boolean_proto, "toString", self.native_method("Boolean.prototype.toString"));
+        Self::define_non_enumerable(&self.boolean_proto, "valueOf", self.native_method("Boolean.prototype.valueOf"));
+        Self::define_non_enumerable(&self.error_proto, "toString", self.native_method("Error.prototype.toString"));
+        self.define_native("Symbol");
+        Self::define_non_enumerable(&self.array_proto, "entries", self.native_method("Array.prototype.entries"));
+        Self::define_non_enumerable(&self.array_proto, "keys", self.native_method("Array.prototype.keys"));
+        Self::define_non_enumerable(&self.array_proto, "values", self.native_method("Array.prototype.values"));
     }
 
     fn define_non_enumerable(object: &ObjectRef, property: &str, value: Value) {
@@ -1552,12 +1632,10 @@ impl Interpreter {
                     .to_number()
                     .is_nan(),
             )),
-            "JSON.stringify" => Ok(Value::String(
-                args.first()
-                    .cloned()
-                    .unwrap_or(Value::Undefined)
-                    .to_string(),
-            )),
+            "JSON.stringify" => {
+                let value = args.first().cloned().unwrap_or(Value::Undefined);
+                Ok(Value::String(self.json_stringify(&value)?))
+            }
             "Object.values" => {
                 let Some(Value::Object(object)) = args.first().cloned() else {
                     return Err(JsError::type_error("Object.values expects object"));
@@ -2524,6 +2602,189 @@ impl Interpreter {
             "Math.tan" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().tan())),
             "Math.tanh" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().tanh())),
             "Math.trunc" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().trunc())),
+            "Object.assign" => {
+                let Some(Value::Object(target)) = args.first().cloned() else {
+                    return Err(JsError::type_error("Object.assign expects object"));
+                };
+                for source in args.iter().skip(1) {
+                    if let Value::Object(src) = source {
+                        let src = src.borrow();
+                        for key in src.props.keys() {
+                            if !src.non_enumerable_props.contains(key) {
+                                target.borrow_mut().props.insert(key.clone(), src.props[key].clone());
+                            }
+                        }
+                    }
+                }
+                Ok(Value::Object(target))
+            }
+            "Object.entries" => {
+                let Some(Value::Object(obj)) = args.first().cloned() else {
+                    return Err(JsError::type_error("Object.entries expects object"));
+                };
+                let obj = obj.borrow();
+                let mut result: Vec<Option<Value>> = Vec::new();
+                if let Internal::Array(items) = &obj.internal {
+                    for (i, item) in items.iter().enumerate() {
+                        if item.is_some() {
+                            let pair = vec![Some(Value::String(i.to_string())), item.clone()];
+                            let arr = Object::with_internal(Internal::Array(pair));
+                            arr.borrow_mut().proto = Some(self.array_proto.clone());
+                            result.push(Some(Value::Object(arr)));
+                        }
+                    }
+                }
+                let mut keys: Vec<String> = obj.props.keys().cloned().collect();
+                keys.sort();
+                for key in keys {
+                    if !obj.non_enumerable_props.contains(&key) {
+                        let pair = vec![Some(Value::String(key.clone())), Some(obj.props[&key].clone())];
+                        let arr = Object::with_internal(Internal::Array(pair));
+                        arr.borrow_mut().proto = Some(self.array_proto.clone());
+                        result.push(Some(Value::Object(arr)));
+                    }
+                }
+                let arr = Object::with_internal(Internal::Array(result));
+                arr.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(arr))
+            }
+            "Object.is" => Ok(Value::Bool(same_value(
+                &args.first().cloned().unwrap_or(Value::Undefined),
+                &args.get(1).cloned().unwrap_or(Value::Undefined),
+            ))),
+            "Object.getOwnPropertyNames" => {
+                let Some(Value::Object(obj)) = args.first().cloned() else {
+                    return Err(JsError::type_error("Object.getOwnPropertyNames expects object"));
+                };
+                let obj = obj.borrow();
+                let mut names: Vec<Option<Value>> = Vec::new();
+                if let Internal::Array(items) = &obj.internal {
+                    names.push(Some(Value::String("length".into())));
+                    for (i, item) in items.iter().enumerate() {
+                        if item.is_some() { names.push(Some(Value::String(i.to_string()))); }
+                    }
+                }
+                for key in obj.props.keys() {
+                    names.push(Some(Value::String(key.clone())));
+                }
+                let arr = Object::with_internal(Internal::Array(names));
+                arr.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(Value::Object(arr))
+            }
+            "Object.setPrototypeOf" => {
+                let Some(Value::Object(target)) = args.first().cloned() else {
+                    return Err(JsError::type_error("Object.setPrototypeOf expects object"));
+                };
+                match args.get(1).cloned().unwrap_or(Value::Undefined) {
+                    Value::Object(p) => { target.borrow_mut().proto = Some(p); }
+                    Value::Null => { target.borrow_mut().proto = None; }
+                    _ => return Err(JsError::type_error("prototype must be object or null")),
+                }
+                Ok(Value::Object(target))
+            }
+            "Object.preventExtensions" => {
+                let Some(Value::Object(target)) = args.first().cloned() else {
+                    return Err(JsError::type_error("Object.preventExtensions expects object"));
+                };
+                target.borrow_mut().non_enumerable_props.insert("__extensible_false".into());
+                Ok(Value::Object(target))
+            }
+            "Object.isExtensible" => Ok(Value::Bool(
+                if let Some(Value::Object(o)) = args.first().cloned() {
+                    !o.borrow().non_enumerable_props.contains("__extensible_false")
+                } else { true }
+            )),
+            "Object.freeze" => {
+                let Some(Value::Object(target)) = args.first().cloned() else {
+                    return Err(JsError::type_error("Object.freeze expects object"));
+                };
+                target.borrow_mut().non_enumerable_props.insert("__frozen".into());
+                Ok(Value::Object(target))
+            }
+            "Object.isFrozen" => Ok(Value::Bool(
+                if let Some(Value::Object(o)) = args.first().cloned() {
+                    o.borrow().non_enumerable_props.contains("__frozen")
+                } else { true }
+            )),
+            "Object.seal" => {
+                let Some(Value::Object(target)) = args.first().cloned() else {
+                    return Err(JsError::type_error("Object.seal expects object"));
+                };
+                target.borrow_mut().non_enumerable_props.insert("__sealed".into());
+                Ok(Value::Object(target))
+            }
+            "Object.isSealed" => Ok(Value::Bool(
+                if let Some(Value::Object(o)) = args.first().cloned() {
+                    o.borrow().non_enumerable_props.contains("__sealed")
+                } else { true }
+            )),
+            "Number.isNaN" => Ok(Value::Bool(
+                args.first().map(|v| v.to_number().is_nan()).unwrap_or(false),
+            )),
+            "Number.isFinite" => Ok(Value::Bool(
+                args.first().map(|v| v.to_number().is_finite()).unwrap_or(false),
+            )),
+            "Number.parseInt" => {
+                let s = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let radix = args.get(1).map(|v| v.to_number() as u32).unwrap_or(10);
+                Ok(Value::Number(i64::from_str_radix(s.trim(), radix).unwrap_or(0) as f64))
+            }
+            "Number.parseFloat" => {
+                let s = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                Ok(Value::Number(s.trim().parse::<f64>().unwrap_or(f64::NAN)))
+            }
+            "Number.isInteger" => Ok(Value::Bool(
+                args.first().map(|v| { let n = v.to_number(); n.is_finite() && n.fract() == 0.0 }).unwrap_or(false),
+            )),
+            "Boolean.prototype.toString" => Ok(Value::String(this_value.is_truthy().to_string())),
+            "Boolean.prototype.valueOf" => Ok(Value::Bool(this_value.is_truthy())),
+            "Error.prototype.toString" => {
+                let name = if let Value::Object(ref o) = this_value {
+                    o.borrow().props.get("name").cloned().unwrap_or(Value::String("Error".into())).to_string()
+                } else { "Error".to_string() };
+                let msg = if let Value::Object(ref o) = this_value {
+                    o.borrow().props.get("message").cloned().unwrap_or(Value::String(String::new())).to_string()
+                } else { String::new() };
+                if msg.is_empty() { Ok(Value::String(name)) }
+                else { Ok(Value::String(format!("{name}: {msg}"))) }
+            }
+            "Symbol" => {
+                let desc = args.first().cloned().map(|v| v.to_string()).unwrap_or_default();
+                let sym = Object::plain();
+                sym.borrow_mut().props.insert("description".into(), Value::String(desc));
+                Ok(Value::Object(sym))
+            }
+            "Array.prototype.entries" => {
+                if let Value::Object(ref o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    let mut arr = Vec::new();
+                    for (i, v) in items.iter().enumerate() {
+                        let pair = vec![Value::Number(i as f64), v.clone().unwrap_or(Value::Undefined)];
+                        arr.push(Value::array(pair));
+                    }
+                    return Ok(Value::Object(make_iterator(arr, 0)));
+                }
+                Ok(Value::Object(make_empty_iterator()))
+            }
+            "Array.prototype.keys" => {
+                if let Value::Object(ref o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    let arr: Vec<Value> = (0..items.len()).map(|i| Value::Number(i as f64)).collect();
+                    return Ok(Value::Object(make_iterator(arr, 0)));
+                }
+                Ok(Value::Object(make_empty_iterator()))
+            }
+            "Array.prototype.values" => {
+                if let Value::Object(ref o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    let arr: Vec<Value> = items.iter().filter_map(|v| v.clone()).collect();
+                    return Ok(Value::Object(make_iterator(arr, 0)));
+                }
+                Ok(Value::Object(make_empty_iterator()))
+            }
             _ => {
                 if let Some(func) = construct {
                     let obj = Object::plain();
@@ -2575,6 +2836,68 @@ impl Interpreter {
         self.output.push(text);
     }
 
+    fn json_stringify(&self, value: &Value) -> Result<String, JsError> {
+        fn stringify_impl(value: &Value) -> Result<String, JsError> {
+            match value {
+                Value::Null => Ok("null".into()),
+                Value::Bool(true) => Ok("true".into()),
+                Value::Bool(false) => Ok("false".into()),
+                Value::Number(n) => {
+                    if n.is_nan() || n.is_infinite() { Ok("null".into()) }
+                    else if n.fract() == 0.0 && n.is_finite() {
+                        Ok(format!("{}", *n as i64))
+                    } else {
+                        Ok(n.to_string())
+                    }
+                }
+                Value::String(s) => {
+                    let escaped: String = s.chars().map(|c| match c {
+                        '"' => "\\\"".to_string(),
+                        '\\' => "\\\\".to_string(),
+                        '\n' => "\\n".to_string(),
+                        '\r' => "\\r".to_string(),
+                        '\t' => "\\t".to_string(),
+                        c if c.is_control() => format!("\\u{:04x}", c as u32),
+                        c => c.to_string(),
+                    }).collect();
+                    Ok(format!("\"{}\"", escaped))
+                }
+                Value::Undefined => Ok("undefined".into()),
+                Value::Object(o) => {
+                    let obj = o.borrow();
+                    match &obj.internal {
+                        Internal::Array(items) => {
+                            let parts: Vec<String> = items.iter()
+                                .map(|v| match v {
+                                    Some(v) => stringify_impl(v).unwrap_or_else(|_| "null".into()),
+                                    None => "null".into(),
+                                })
+                                .collect();
+                            Ok(format!("[{}]", parts.join(",")))
+                        }
+                        _ => {
+                            let mut parts: Vec<String> = Vec::new();
+                            let mut keys: Vec<String> = obj.props.keys().cloned().collect();
+                            keys.sort();
+                            for key in keys {
+                                if obj.non_enumerable_props.contains(&key) { continue; }
+                                let val = &obj.props[&key];
+                                if matches!(val, Value::Undefined) || val.is_callable() { continue; }
+                                if let Ok(s) = stringify_impl(val) {
+                                    parts.push(format!("\"{}\":{}", key, s));
+                                }
+                            }
+                            Ok(format!("{{{}}}", parts.join(",")))
+                        }
+                    }
+                }
+            }
+        }
+        let result = stringify_impl(value)?;
+        if result == "undefined" { Ok(String::new()) }
+        else { Ok(result) }
+    }
+
     fn this_str(&self, this_value: &Value) -> String {
         match this_value {
             Value::String(s) => s.clone(),
@@ -2588,6 +2911,82 @@ impl Interpreter {
             }
             _ => this_value.to_string(),
         }
+    }
+
+    fn this_number(&self, this_value: &Value) -> f64 {
+        match this_value {
+            Value::Number(n) => *n,
+            Value::Object(o) => {
+                o.borrow().props.get("value").map(|v| v.to_number()).unwrap_or(f64::NAN)
+            }
+            _ => this_value.to_number(),
+        }
+    }
+}
+
+fn same_value(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(a), Value::Number(b)) => {
+            if a.is_nan() && b.is_nan() { return true; }
+            if *a == 0.0 && *b == 0.0 { return a.signum() == b.signum(); }
+            a == b
+        }
+        _ => a == b,
+    }
+}
+
+fn format_number_radix(n: f64, radix: u32) -> String {
+    if n.is_nan() { return "NaN".into(); }
+    if n.is_infinite() { return if n > 0.0 { "Infinity".into() } else { "-Infinity".into() }; }
+    let abs = n.abs();
+    let int_part = abs.trunc() as u64;
+    let frac_part = abs.fract();
+    let int_str = if radix == 16 {
+        format!("{:x}", int_part)
+    } else if radix == 8 {
+        format!("{:o}", int_part)
+    } else if radix == 2 {
+        format!("{:b}", int_part)
+    } else {
+        int_part.to_string()
+    };
+    let sign = if n < 0.0 { "-" } else { "" };
+    if frac_part == 0.0 {
+        format!("{sign}{int_str}")
+    } else {
+        format!("{sign}{int_str}.{}", frac_part.to_string().trim_start_matches("0."))
+    }
+}
+
+fn make_iterator(values: Vec<Value>, idx: usize) -> ObjectRef {
+    let iter = Object::plain();
+    let values = Rc::new(RefCell::new((values, idx)));
+    let next_fn = Object::with_internal(Internal::Native("Iterator.next"));
+    iter.borrow_mut().props.insert("next".into(), Value::Object(next_fn));
+    // Store the values in a hidden property
+    iter.borrow_mut().props.insert("__iter_values".into(), Value::Object(
+        Object::with_internal(Internal::Array(values.borrow().0.clone().into_iter().map(Some).collect()))
+    ));
+    iter.borrow_mut().props.insert("__iter_idx".into(), Value::Number(idx as f64));
+    iter
+}
+
+fn make_empty_iterator() -> ObjectRef {
+    make_iterator(Vec::new(), 0)
+}
+
+fn this_str(this_value: &Value) -> String {
+    match this_value {
+        Value::String(s) => s.clone(),
+        Value::Object(o) => {
+            let obj = o.borrow();
+            if let Some(Value::String(s)) = obj.props.get("value") {
+                s.clone()
+            } else {
+                this_value.to_string()
+            }
+        }
+        _ => this_value.to_string(),
     }
 }
 
@@ -3276,7 +3675,7 @@ mod tests {
             JSON.stringify(summary.values);
         "#;
 
-        assert_eq!(run_source(src).unwrap(), Value::String("3|6|9".into()));
+        assert_eq!(run_source(src).unwrap(), Value::String("\"3|6|9\"".into()));
     }
 
     #[test]
