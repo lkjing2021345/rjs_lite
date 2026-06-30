@@ -57,7 +57,7 @@ impl Lexer {
                     TokenKind::NotEqual,
                     TokenKind::StrictNotEqual,
                 ),
-                '=' => self.eq_chain(TokenKind::Assign, TokenKind::Equal, TokenKind::StrictEqual),
+                '=' => self.equals(),
                 '<' => self.less_than(),
                 '>' => self.greater_than(),
                 '&' => self.ampersand(),
@@ -230,6 +230,27 @@ impl Lexer {
             }
         } else {
             single
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn equals(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = match self.peek() {
+            Some('=') => {
+                self.advance();
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::StrictEqual
+                } else {
+                    TokenKind::Equal
+                }
+            }
+            Some('>') => {
+                self.advance();
+                TokenKind::Arrow
+            }
+            _ => TokenKind::Assign,
         };
         self.tokens.push(Token::new(kind, self.span(s, l, c)));
     }

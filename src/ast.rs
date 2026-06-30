@@ -73,6 +73,10 @@ pub enum Expr {
         params: Vec<String>,
         body: Vec<Stmt>,
     },
+    ArrowFunction {
+        params: Vec<String>,
+        body: Vec<Stmt>,
+    },
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,

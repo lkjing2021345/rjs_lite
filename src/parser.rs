@@ -323,6 +323,13 @@ impl Parser {
 
     fn assignment(&mut self) -> JsResult<Expr> {
         let expr = self.conditional()?;
+        if self.eat(&TokenKind::Arrow) {
+            let params = match expr {
+                Expr::Identifier(name) => vec![name],
+                _ => return Err(self.error("arrow function params must be identifier")),
+            };
+            return self.arrow_body(params);
+        }
         if self.eat(&TokenKind::Assign) {
             if Self::is_assignable(&expr) {
                 return Ok(Expr::Assign {
@@ -638,6 +645,11 @@ impl Parser {
             TokenKind::Identifier(s) => Ok(Expr::Identifier(s)),
             TokenKind::Function => self.function_expr(),
             TokenKind::LeftParen => {
+                let saved = self.pos;
+                if let Ok(af) = self.try_arrow_function() {
+                    return Ok(af);
+                }
+                self.pos = saved;
                 let e = self.expression()?;
                 self.expect(&TokenKind::RightParen)?;
                 Ok(e)
@@ -646,6 +658,37 @@ impl Parser {
             TokenKind::LeftBrace => self.object_literal(),
             _ => Err(JsError::parse("expected expression", token.span)),
         }
+    }
+
+    fn try_arrow_function(&mut self) -> JsResult<Expr> {
+        if self.eat(&TokenKind::RightParen) {
+            self.expect(&TokenKind::Arrow)?;
+            return self.arrow_body(Vec::new());
+        }
+        let mut params = Vec::new();
+        params.push(self.identifier()?);
+        if self.eat(&TokenKind::RightParen) {
+            self.expect(&TokenKind::Arrow)?;
+            return self.arrow_body(params);
+        }
+        loop {
+            self.expect(&TokenKind::Comma)?;
+            params.push(self.identifier()?);
+            if self.eat(&TokenKind::RightParen) {
+                self.expect(&TokenKind::Arrow)?;
+                return self.arrow_body(params);
+            }
+        }
+    }
+
+    fn arrow_body(&mut self, params: Vec<String>) -> JsResult<Expr> {
+        let body = if self.eat(&TokenKind::LeftBrace) {
+            self.block()?
+        } else {
+            let expr = self.expression()?;
+            vec![Stmt::Return(Some(expr))]
+        };
+        Ok(Expr::ArrowFunction { params, body })
     }
 
     fn function_expr(&mut self) -> JsResult<Expr> {

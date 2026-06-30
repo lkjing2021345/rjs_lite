@@ -76,6 +76,7 @@ pub enum TokenKind {
     LeftShift,
     RightShift,
     UnsignedRightShift,
+    Arrow,
     Eof,
 }
 

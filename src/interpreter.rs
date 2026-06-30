@@ -1044,6 +1044,20 @@ impl Interpreter {
                 Ok(Value::Object(obj))
             }
             Expr::Function { params, body } => Ok(self.make_function(params.clone(), body.clone())),
+            Expr::ArrowFunction { params, body } => {
+                let obj = Object::with_internal(Internal::Function {
+                    params: params.clone(),
+                    body: body.clone(),
+                });
+                obj.borrow_mut().proto = Some(self.function_proto.clone());
+                let proto = Object::plain();
+                proto.borrow_mut().proto = Some(self.object_proto.clone());
+                Self::define_non_enumerable(&proto, "constructor", Value::Object(obj.clone()));
+                Self::define_non_enumerable(&obj, "prototype", Value::Object(proto));
+                let value = Value::Object(obj.clone());
+                self.remember_closure(&value);
+                Ok(value)
+            }
             Expr::Assign { target, value } => {
                 let value = self.eval_expr(value)?;
                 self.assign_target(target, value.clone())?;
