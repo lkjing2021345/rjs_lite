@@ -1029,6 +1029,29 @@ impl Interpreter {
                 match op {
                     UnaryOp::Not => Ok(Value::Bool(!value.is_truthy())),
                     UnaryOp::Negate => Ok(Value::Number(-value.to_number())),
+                    UnaryOp::Delete => {
+                        match expr.as_ref() {
+                            Expr::Member { object, property } => {
+                                let obj = self.eval_expr(object)?;
+                                if let Value::Object(ref o) = obj {
+                                    let existed = o.borrow_mut().props.remove(property);
+                                    return Ok(Value::Bool(existed.is_some()));
+                                }
+                                Ok(Value::Bool(true))
+                            }
+                            Expr::Index { object, index } => {
+                                let obj = self.eval_expr(object)?;
+                                let key = self.eval_expr(index)?.to_string();
+                                if let Value::Object(ref o) = obj {
+                                    let existed = o.borrow_mut().props.remove(&key);
+                                    return Ok(Value::Bool(existed.is_some()));
+                                }
+                                Ok(Value::Bool(true))
+                            }
+                            _ => Ok(Value::Bool(true)),
+                        }
+                    }
+                    UnaryOp::Void => Ok(Value::Undefined),
                 }
             }
             Expr::Typeof(expr) => match expr.as_ref() {
@@ -1324,6 +1347,14 @@ impl Interpreter {
             BinaryOp::Greater => Ok(Value::Bool(left.to_number() > right.to_number())),
             BinaryOp::GreaterEqual => Ok(Value::Bool(left.to_number() >= right.to_number())),
             BinaryOp::Instanceof => Ok(Value::Bool(self.instanceof(left, right))),
+            BinaryOp::In => {
+                let Value::Object(ref o) = right else {
+                    return Err(JsError::type_error("right-hand side of in must be an object"));
+                };
+                let key = left.to_string();
+                let has = Object::lookup(o, &key).is_some();
+                Ok(Value::Bool(has))
+            }
             BinaryOp::And | BinaryOp::Or => unreachable!("short-circuited before binary eval"),
         }
     }

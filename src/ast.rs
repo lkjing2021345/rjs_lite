@@ -119,6 +119,8 @@ pub enum Expr {
 pub enum UnaryOp {
     Negate,
     Not,
+    Delete,
+    Void,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,5 +140,6 @@ pub enum BinaryOp {
     GreaterEqual,
     And,
     Or,
+    In,
     Instanceof,
 }

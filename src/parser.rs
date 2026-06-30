@@ -368,6 +368,7 @@ impl Parser {
                 (TokenKind::LessEqual, BinaryOp::LessEqual),
                 (TokenKind::Greater, BinaryOp::Greater),
                 (TokenKind::GreaterEqual, BinaryOp::GreaterEqual),
+                (TokenKind::In, BinaryOp::In),
                 (TokenKind::Instanceof, BinaryOp::Instanceof),
             ],
         )
@@ -425,6 +426,16 @@ impl Parser {
         } else if self.eat(&TokenKind::Minus) {
             Ok(Expr::Unary {
                 op: UnaryOp::Negate,
+                expr: Box::new(self.unary()?),
+            })
+        } else if self.eat(&TokenKind::Delete) {
+            Ok(Expr::Unary {
+                op: UnaryOp::Delete,
+                expr: Box::new(self.unary()?),
+            })
+        } else if self.eat(&TokenKind::Void) {
+            Ok(Expr::Unary {
+                op: UnaryOp::Void,
                 expr: Box::new(self.unary()?),
             })
         } else if self.eat(&TokenKind::Typeof) {
