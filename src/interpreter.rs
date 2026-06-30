@@ -1080,6 +1080,13 @@ impl Interpreter {
                 self.assign_target(target, new_value.clone())?;
                 if *prefix { Ok(new_value) } else { Ok(old) }
             }
+            Expr::TemplateLiteral { parts } => {
+                let mut result = String::new();
+                for part in parts {
+                    result.push_str(&self.eval_expr(part)?.to_string());
+                }
+                Ok(Value::String(result))
+            }
             Expr::Unary { op, expr } => {
                 let value = self.eval_expr(expr)?;
                 match op {

@@ -62,6 +62,7 @@ impl Lexer {
                 '>' => self.greater_than(),
                 '&' => self.ampersand(),
                 '|' => self.pipe(),
+                '`' => self.template_string(),
                 '/' => self.slash()?,
                 _ => {
                     return Err(JsError::lex(
@@ -266,6 +267,42 @@ impl Lexer {
         self.advance();
         self.tokens.push(Token::new(kind, self.span(s, l, c)));
         Ok(())
+    }
+    fn template_string(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let mut buf = String::new();
+        while let Some(ch) = self.peek() {
+            if ch == '`' {
+                self.advance();
+                break;
+            }
+            if ch == '\\' {
+                self.advance();
+                if let Some(next) = self.peek() {
+                    self.advance();
+                    buf.push(match next {
+                        'n' => '\n', 't' => '\t', 'r' => '\r',
+                        '\\' => '\\', '`' => '`', '$' => '$',
+                        c => c,
+                    });
+                }
+                continue;
+            }
+            if ch == '$' {
+                self.advance();
+                if self.peek() == Some('{') {
+                    self.advance();
+                    buf.push_str("${");
+                    continue;
+                }
+                buf.push('$');
+                continue;
+            }
+            self.advance();
+            buf.push(ch);
+        }
+        self.tokens.push(Token::new(TokenKind::String(buf), self.span(s, l, c)));
     }
     fn slash(&mut self) -> JsResult<()> {
         match self.peek_next() {

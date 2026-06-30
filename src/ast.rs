@@ -77,6 +77,9 @@ pub enum Expr {
         params: Vec<String>,
         body: Vec<Stmt>,
     },
+    TemplateLiteral {
+        parts: Vec<Expr>,
+    },
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
