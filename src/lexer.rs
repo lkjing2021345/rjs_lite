@@ -27,6 +27,9 @@ impl Lexer {
     }
 
     fn lex(mut self) -> JsResult<Vec<Token>> {
+        if self.peek() == Some('\u{FEFF}') {
+            self.advance();
+        }
         while let Some(ch) = self.peek() {
             match ch {
                 ' ' | '\t' | '\r' | '\n' => {
