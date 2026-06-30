@@ -572,6 +572,60 @@ fn function_bind_prepends_args() {
 
 // --- end Function method tests ---
 
+// --- Math tests ---
+
+#[test]
+fn math_abs_returns_absolute() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "Math.abs(-5)"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "5");
+}
+
+#[test]
+fn math_floor_rounds_down() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "Math.floor(3.7)"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "3");
+}
+
+#[test]
+fn math_max_returns_largest() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "Math.max(1, 5, 3)"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "5");
+}
+
+#[test]
+fn math_pow_raises_to_power() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "Math.pow(2, 3)"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "8");
+}
+
+#[test]
+fn math_constants_are_defined() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(["-e", "Math.PI > 3.14 && Math.E > 2.71"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "true");
+}
+
+// --- end Math tests ---
+
 #[test]
 fn agent_eval_marks_output_truncated() {
     let source = (0..257)

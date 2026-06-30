@@ -179,6 +179,57 @@ impl Interpreter {
         Self::define_non_enumerable(&json, "stringify", self.native_method("JSON.stringify"));
         self.define_global("JSON", Value::Object(json), false);
 
+        let math = Object::plain();
+        math.borrow_mut().proto = Some(self.object_proto.clone());
+        for (name, value) in [
+            ("E", std::f64::consts::E),
+            ("LN10", std::f64::consts::LN_10),
+            ("LN2", std::f64::consts::LN_2),
+            ("LOG10E", std::f64::consts::LOG10_E),
+            ("LOG2E", std::f64::consts::LOG2_E),
+            ("PI", std::f64::consts::PI),
+            ("SQRT1_2", std::f64::consts::FRAC_1_SQRT_2),
+            ("SQRT2", std::f64::consts::SQRT_2),
+        ] {
+            math.borrow_mut().props.insert(name.to_string(), Value::Number(value));
+        }
+        Self::define_non_enumerable(&math, "abs", self.native_method("Math.abs"));
+        Self::define_non_enumerable(&math, "acos", self.native_method("Math.acos"));
+        Self::define_non_enumerable(&math, "acosh", self.native_method("Math.acosh"));
+        Self::define_non_enumerable(&math, "asin", self.native_method("Math.asin"));
+        Self::define_non_enumerable(&math, "asinh", self.native_method("Math.asinh"));
+        Self::define_non_enumerable(&math, "atan", self.native_method("Math.atan"));
+        Self::define_non_enumerable(&math, "atanh", self.native_method("Math.atanh"));
+        Self::define_non_enumerable(&math, "atan2", self.native_method("Math.atan2"));
+        Self::define_non_enumerable(&math, "cbrt", self.native_method("Math.cbrt"));
+        Self::define_non_enumerable(&math, "ceil", self.native_method("Math.ceil"));
+        Self::define_non_enumerable(&math, "clz32", self.native_method("Math.clz32"));
+        Self::define_non_enumerable(&math, "cos", self.native_method("Math.cos"));
+        Self::define_non_enumerable(&math, "cosh", self.native_method("Math.cosh"));
+        Self::define_non_enumerable(&math, "exp", self.native_method("Math.exp"));
+        Self::define_non_enumerable(&math, "expm1", self.native_method("Math.expm1"));
+        Self::define_non_enumerable(&math, "floor", self.native_method("Math.floor"));
+        Self::define_non_enumerable(&math, "fround", self.native_method("Math.fround"));
+        Self::define_non_enumerable(&math, "hypot", self.native_method("Math.hypot"));
+        Self::define_non_enumerable(&math, "imul", self.native_method("Math.imul"));
+        Self::define_non_enumerable(&math, "log", self.native_method("Math.log"));
+        Self::define_non_enumerable(&math, "log10", self.native_method("Math.log10"));
+        Self::define_non_enumerable(&math, "log1p", self.native_method("Math.log1p"));
+        Self::define_non_enumerable(&math, "log2", self.native_method("Math.log2"));
+        Self::define_non_enumerable(&math, "max", self.native_method("Math.max"));
+        Self::define_non_enumerable(&math, "min", self.native_method("Math.min"));
+        Self::define_non_enumerable(&math, "pow", self.native_method("Math.pow"));
+        Self::define_non_enumerable(&math, "random", self.native_method("Math.random"));
+        Self::define_non_enumerable(&math, "round", self.native_method("Math.round"));
+        Self::define_non_enumerable(&math, "sign", self.native_method("Math.sign"));
+        Self::define_non_enumerable(&math, "sin", self.native_method("Math.sin"));
+        Self::define_non_enumerable(&math, "sinh", self.native_method("Math.sinh"));
+        Self::define_non_enumerable(&math, "sqrt", self.native_method("Math.sqrt"));
+        Self::define_non_enumerable(&math, "tan", self.native_method("Math.tan"));
+        Self::define_non_enumerable(&math, "tanh", self.native_method("Math.tanh"));
+        Self::define_non_enumerable(&math, "trunc", self.native_method("Math.trunc"));
+        self.define_global("Math", Value::Object(math), false);
+
         self.function_proto.borrow_mut().proto = Some(self.object_proto.clone());
         Self::define_non_enumerable(
             &self.function_proto,
@@ -2390,6 +2441,89 @@ impl Interpreter {
                 }
                 Ok(Value::String(result))
             }
+            "Math.abs" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().abs())),
+            "Math.acos" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().acos())),
+            "Math.acosh" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().acosh())),
+            "Math.asin" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().asin())),
+            "Math.asinh" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().asinh())),
+            "Math.atan" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().atan())),
+            "Math.atanh" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().atanh())),
+            "Math.atan2" => Ok(Value::Number(
+                args.first().unwrap_or(&Value::Number(0.0)).to_number().atan2(
+                    args.get(1).unwrap_or(&Value::Number(0.0)).to_number(),
+                ),
+            )),
+            "Math.cbrt" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().cbrt())),
+            "Math.ceil" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().ceil())),
+            "Math.clz32" => Ok(Value::Number(
+                (args.first().unwrap_or(&Value::Number(0.0)).to_number() as u32).leading_zeros() as f64,
+            )),
+            "Math.cos" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().cos())),
+            "Math.cosh" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().cosh())),
+            "Math.exp" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().exp())),
+            "Math.expm1" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().exp_m1())),
+            "Math.floor" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().floor())),
+            "Math.fround" => {
+                let v = args.first().unwrap_or(&Value::Number(0.0)).to_number() as f32;
+                Ok(Value::Number(v as f64))
+            }
+            "Math.hypot" => {
+                let sum: f64 = args.iter().map(|v| {
+                    let n = v.to_number();
+                    n * n
+                }).sum();
+                Ok(Value::Number(sum.sqrt()))
+            }
+            "Math.imul" => Ok(Value::Number(
+                ((args.first().unwrap_or(&Value::Number(0.0)).to_number() as i32)
+                    .wrapping_mul(args.get(1).unwrap_or(&Value::Number(0.0)).to_number() as i32)) as f64,
+            )),
+            "Math.log" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().ln())),
+            "Math.log10" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().log10())),
+            "Math.log1p" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().ln_1p())),
+            "Math.log2" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().log2())),
+            "Math.max" => {
+                let mut max = f64::NEG_INFINITY;
+                for arg in &args {
+                    let n = arg.to_number();
+                    if n.is_nan() { return Ok(Value::Number(f64::NAN)); }
+                    if n > max || (n == 0.0 && max == 0.0 && n.signum() > max.signum()) {
+                        max = n;
+                    }
+                }
+                Ok(Value::Number(if args.is_empty() { f64::NEG_INFINITY } else { max }))
+            }
+            "Math.min" => {
+                let mut min = f64::INFINITY;
+                for arg in &args {
+                    let n = arg.to_number();
+                    if n.is_nan() { return Ok(Value::Number(f64::NAN)); }
+                    if n < min || (n == 0.0 && min == 0.0 && n.signum() < min.signum()) {
+                        min = n;
+                    }
+                }
+                Ok(Value::Number(if args.is_empty() { f64::INFINITY } else { min }))
+            }
+            "Math.pow" => Ok(Value::Number(
+                args.first().unwrap_or(&Value::Number(0.0)).to_number()
+                    .powf(args.get(1).unwrap_or(&Value::Number(0.0)).to_number()),
+            )),
+            "Math.random" => {
+                let seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .subsec_nanos();
+                let next = (seed.wrapping_mul(1103515245).wrapping_add(12345)) & 0x7fffffff;
+                Ok(Value::Number(next as f64 / 0x80000000u64 as f64))
+            }
+            "Math.round" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().round())),
+            "Math.sign" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().signum())),
+            "Math.sin" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().sin())),
+            "Math.sinh" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().sinh())),
+            "Math.sqrt" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().sqrt())),
+            "Math.tan" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().tan())),
+            "Math.tanh" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().tanh())),
+            "Math.trunc" => Ok(Value::Number(args.first().unwrap_or(&Value::Number(0.0)).to_number().trunc())),
             _ => {
                 if let Some(func) = construct {
                     let obj = Object::plain();
