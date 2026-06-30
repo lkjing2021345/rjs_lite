@@ -21,11 +21,35 @@ impl Span {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JsErrorType {
+    Error,
+    SyntaxError,
+    TypeError,
+    ReferenceError,
+    RangeError,
+}
+
+impl JsErrorType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Error => "Error",
+            Self::SyntaxError => "SyntaxError",
+            Self::TypeError => "TypeError",
+            Self::ReferenceError => "ReferenceError",
+            Self::RangeError => "RangeError",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsError {
     Lex { message: String, span: Span },
     Parse { message: String, span: Span },
-    Runtime { message: String },
+    Runtime {
+        message: String,
+        error_type: JsErrorType,
+    },
 }
 
 impl JsError {
@@ -46,6 +70,42 @@ impl JsError {
     pub fn runtime(message: impl Into<String>) -> Self {
         Self::Runtime {
             message: message.into(),
+            error_type: JsErrorType::Error,
+        }
+    }
+
+    pub fn type_error(message: impl Into<String>) -> Self {
+        Self::Runtime {
+            message: message.into(),
+            error_type: JsErrorType::TypeError,
+        }
+    }
+
+    pub fn reference_error(message: impl Into<String>) -> Self {
+        Self::Runtime {
+            message: message.into(),
+            error_type: JsErrorType::ReferenceError,
+        }
+    }
+
+    pub fn range_error(message: impl Into<String>) -> Self {
+        Self::Runtime {
+            message: message.into(),
+            error_type: JsErrorType::RangeError,
+        }
+    }
+
+    pub fn syntax_error(message: impl Into<String>) -> Self {
+        Self::Runtime {
+            message: message.into(),
+            error_type: JsErrorType::SyntaxError,
+        }
+    }
+
+    pub fn error_type(&self) -> Option<&JsErrorType> {
+        match self {
+            JsError::Runtime { error_type, .. } => Some(error_type),
+            JsError::Parse { .. } | JsError::Lex { .. } => None,
         }
     }
 }
@@ -54,14 +114,17 @@ impl fmt::Display for JsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             JsError::Lex { message, span } => {
-                write!(f, "lex error at {}:{}: {}", span.line, span.column, message)
+                write!(f, "SyntaxError: lex error at {}:{}: {}", span.line, span.column, message)
             }
             JsError::Parse { message, span } => write!(
                 f,
-                "parse error at {}:{}: {}",
+                "SyntaxError: parse error at {}:{}: {}",
                 span.line, span.column, message
             ),
-            JsError::Runtime { message } => write!(f, "runtime error: {message}"),
+            JsError::Runtime {
+                message,
+                error_type,
+            } => write!(f, "{}: {}", error_type.as_str(), message),
         }
     }
 }

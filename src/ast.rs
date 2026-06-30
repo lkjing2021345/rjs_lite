@@ -42,6 +42,11 @@ pub enum Stmt {
         update: Option<Expr>,
         body: Vec<Stmt>,
     },
+    ForIn {
+        left: Box<Expr>,
+        right: Expr,
+        body: Vec<Stmt>,
+    },
     Switch {
         discriminant: Expr,
         cases: Vec<(Expr, Vec<Stmt>)>,
@@ -49,6 +54,7 @@ pub enum Stmt {
     },
     Block(Vec<Stmt>),
     Break,
+    Continue,
     Expr(Expr),
 }
 
@@ -66,6 +72,17 @@ pub enum Expr {
     Function {
         params: Vec<String>,
         body: Vec<Stmt>,
+    },
+    ArrowFunction {
+        params: Vec<String>,
+        body: Vec<Stmt>,
+    },
+    TemplateLiteral {
+        parts: Vec<Expr>,
+    },
+    RegExp {
+        pattern: String,
+        flags: String,
     },
     Unary {
         op: UnaryOp,
@@ -118,6 +135,9 @@ pub enum Expr {
 pub enum UnaryOp {
     Negate,
     Not,
+    Delete,
+    Void,
+    BitwiseNot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,5 +157,12 @@ pub enum BinaryOp {
     GreaterEqual,
     And,
     Or,
+    In,
     Instanceof,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    LeftShift,
+    RightShift,
+    UnsignedRightShift,
 }

@@ -13,10 +13,12 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 Example output:
 
 ```json
-{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error_kind":null,"error":null}
 ```
 
 Agent mode always exits successfully when the tool process itself runs. JavaScript parse/runtime failures are encoded in the JSON result with `ok:false`.
+
+Agent mode applies the default runtime limits: source text is capped at 64 KiB, captured output is capped at 256 lines, execution is stopped after 100,000 interpreter steps, and nested user-defined function calls are stopped after 16 frames.
 
 ## Result Fields
 
@@ -26,6 +28,7 @@ Agent mode always exits successfully when the tool process itself runs. JavaScri
 - `value_type`: runtime type name such as `number`, `string`, `boolean`, `object`, `undefined`, or `function`. `null` follows JavaScript behavior and reports `object`.
 - `output`: captured `print(value)` lines.
 - `output_truncated`: whether output exceeded the configured line limit.
+- `error_kind`: stable error category on failure, or `null` on success. Current values are `lex`, `parse`, `runtime`, `source_limit`, `step_limit`, and `call_depth_limit`.
 - `error`: diagnostic string on failure, or `null` on success.
 
 ## Rust API
@@ -43,6 +46,8 @@ let runtime = rjs_lite::AgentRuntime::new(rjs_lite::ExecutionContext {
     limits: rjs_lite::RuntimeLimits {
         max_source_bytes: 64 * 1024,
         max_output_lines: 256,
+        max_execution_steps: 100_000,
+        max_call_depth: 16,
     },
     host_functions: vec![rjs_lite::HostFunction {
         name: "print".to_string(),
@@ -59,6 +64,8 @@ let result = runtime.run("print(42);");
 ## Limitations
 
 - Supports only the documented MVP JavaScript subset.
+- Stops agent-mode execution after the configured interpreter step limit.
+- Stops agent-mode execution after the configured call depth limit.
 - Does not claim full ECMAScript compatibility.
 - Does not claim test262 pass-rate coverage yet.
 - Does not provide a security sandbox.

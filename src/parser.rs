@@ -44,6 +44,9 @@ impl Parser {
             self.for_stmt()
         } else if self.eat(&TokenKind::Switch) {
             self.switch_stmt()
+        } else if self.eat(&TokenKind::Continue) {
+            self.optional_semicolon();
+            Ok(Stmt::Continue)
         } else if self.eat(&TokenKind::LeftBrace) {
             Ok(Stmt::Block(self.block()?))
         } else {
@@ -56,11 +59,13 @@ impl Parser {
     fn var_decl(&mut self, mutable: bool) -> JsResult<Stmt> {
         let mut declarations = Vec::new();
         loop {
-            let name = self.identifier()?;
+            let (name, _name_span) = self.identifier_token()?;
             let value = if self.eat(&TokenKind::Assign) {
                 self.expression()?
-            } else {
+            } else if mutable {
                 Expr::Undefined
+            } else {
+                return Err(self.error("const declarations must be initialized"));
             };
             declarations.push((name, value));
             if !self.eat(&TokenKind::Comma) {
@@ -179,9 +184,42 @@ impl Parser {
             Some(Box::new(self.var_decl(false)?))
         } else {
             let expr = self.expression()?;
+            if self.eat(&TokenKind::In) {
+                let right = self.expression()?;
+                self.expect(&TokenKind::RightParen)?;
+                return Ok(Stmt::ForIn {
+                    left: Box::new(expr),
+                    right,
+                    body: self.statement_as_block()?,
+                });
+            }
             self.expect(&TokenKind::Semicolon)?;
             Some(Box::new(Stmt::Expr(expr)))
         };
+        if let Some(init) = &init {
+            if let Stmt::VarDecl { name, value, .. } = init.as_ref() {
+                if self.eat(&TokenKind::In) {
+                    let right = self.expression()?;
+                    self.expect(&TokenKind::RightParen)?;
+                    return Ok(Stmt::ForIn {
+                        left: Box::new(Expr::Identifier(name.clone())),
+                        right,
+                        body: self.statement_as_block()?,
+                    });
+                }
+            }
+            if let Stmt::VarDecls { declarations, .. } = init.as_ref() {
+                if declarations.len() == 1 && self.eat(&TokenKind::In) {
+                    let right = self.expression()?;
+                    self.expect(&TokenKind::RightParen)?;
+                    return Ok(Stmt::ForIn {
+                        left: Box::new(Expr::Identifier(declarations[0].0.clone())),
+                        right,
+                        body: self.statement_as_block()?,
+                    });
+                }
+            }
+        }
         let condition = if self.eat(&TokenKind::Semicolon) {
             None
         } else {
@@ -267,6 +305,11 @@ impl Parser {
             return Ok(params);
         }
         loop {
+            if self.eat(&TokenKind::DotDotDot) {
+                params.push(format!("...{}", self.identifier()?));
+                self.expect(&TokenKind::RightParen)?;
+                return Ok(params);
+            }
             params.push(self.identifier()?);
             if self.eat(&TokenKind::RightParen) {
                 break;
@@ -282,6 +325,13 @@ impl Parser {
 
     fn assignment(&mut self) -> JsResult<Expr> {
         let expr = self.conditional()?;
+        if self.eat(&TokenKind::Arrow) {
+            let params = match expr {
+                Expr::Identifier(name) => vec![name],
+                _ => return Err(self.error("arrow function params must be identifier")),
+            };
+            return self.arrow_body(params);
+        }
         if self.eat(&TokenKind::Assign) {
             if Self::is_assignable(&expr) {
                 return Ok(Expr::Assign {
@@ -342,7 +392,7 @@ impl Parser {
 
     fn equality(&mut self) -> JsResult<Expr> {
         self.binary(
-            Self::comparison,
+            Self::bitwise_or,
             &[
                 (TokenKind::Equal, BinaryOp::Equal),
                 (TokenKind::NotEqual, BinaryOp::NotEqual),
@@ -352,15 +402,39 @@ impl Parser {
         )
     }
 
+    fn bitwise_or(&mut self) -> JsResult<Expr> {
+        self.binary(Self::bitwise_xor, &[(TokenKind::Pipe, BinaryOp::BitwiseOr)])
+    }
+
+    fn bitwise_xor(&mut self) -> JsResult<Expr> {
+        self.binary(Self::bitwise_and, &[(TokenKind::Caret, BinaryOp::BitwiseXor)])
+    }
+
+    fn bitwise_and(&mut self) -> JsResult<Expr> {
+        self.binary(Self::comparison, &[(TokenKind::Ampersand, BinaryOp::BitwiseAnd)])
+    }
+
     fn comparison(&mut self) -> JsResult<Expr> {
         self.binary(
-            Self::term,
+            Self::shift,
             &[
                 (TokenKind::Less, BinaryOp::Less),
                 (TokenKind::LessEqual, BinaryOp::LessEqual),
                 (TokenKind::Greater, BinaryOp::Greater),
                 (TokenKind::GreaterEqual, BinaryOp::GreaterEqual),
+                (TokenKind::In, BinaryOp::In),
                 (TokenKind::Instanceof, BinaryOp::Instanceof),
+            ],
+        )
+    }
+
+    fn shift(&mut self) -> JsResult<Expr> {
+        self.binary(
+            Self::term,
+            &[
+                (TokenKind::LeftShift, BinaryOp::LeftShift),
+                (TokenKind::RightShift, BinaryOp::RightShift),
+                (TokenKind::UnsignedRightShift, BinaryOp::UnsignedRightShift),
             ],
         )
     }
@@ -419,6 +493,16 @@ impl Parser {
                 op: UnaryOp::Negate,
                 expr: Box::new(self.unary()?),
             })
+        } else if self.eat(&TokenKind::Delete) {
+            Ok(Expr::Unary {
+                op: UnaryOp::Delete,
+                expr: Box::new(self.unary()?),
+            })
+        } else if self.eat(&TokenKind::Void) {
+            Ok(Expr::Unary {
+                op: UnaryOp::Void,
+                expr: Box::new(self.unary()?),
+            })
         } else if self.eat(&TokenKind::Typeof) {
             Ok(Expr::Typeof(Box::new(self.unary()?)))
         } else if self.eat(&TokenKind::New) {
@@ -431,6 +515,11 @@ impl Parser {
             Ok(Expr::New {
                 callee: Box::new(callee),
                 args,
+            })
+        } else if self.eat(&TokenKind::Tilde) {
+            Ok(Expr::Unary {
+                op: UnaryOp::BitwiseNot,
+                expr: Box::new(self.unary()?),
             })
         } else if self.eat(&TokenKind::PlusPlus) {
             let target = self.unary()?;
@@ -557,7 +646,16 @@ impl Parser {
             TokenKind::This => Ok(Expr::This),
             TokenKind::Identifier(s) => Ok(Expr::Identifier(s)),
             TokenKind::Function => self.function_expr(),
+            TokenKind::RegExp(pattern, flags) => Ok(Expr::RegExp {
+                pattern: pattern.clone(),
+                flags: flags.clone(),
+            }),
             TokenKind::LeftParen => {
+                let saved = self.pos;
+                if let Ok(af) = self.try_arrow_function() {
+                    return Ok(af);
+                }
+                self.pos = saved;
                 let e = self.expression()?;
                 self.expect(&TokenKind::RightParen)?;
                 Ok(e)
@@ -566,6 +664,37 @@ impl Parser {
             TokenKind::LeftBrace => self.object_literal(),
             _ => Err(JsError::parse("expected expression", token.span)),
         }
+    }
+
+    fn try_arrow_function(&mut self) -> JsResult<Expr> {
+        if self.eat(&TokenKind::RightParen) {
+            self.expect(&TokenKind::Arrow)?;
+            return self.arrow_body(Vec::new());
+        }
+        let mut params = Vec::new();
+        params.push(self.identifier()?);
+        if self.eat(&TokenKind::RightParen) {
+            self.expect(&TokenKind::Arrow)?;
+            return self.arrow_body(params);
+        }
+        loop {
+            self.expect(&TokenKind::Comma)?;
+            params.push(self.identifier()?);
+            if self.eat(&TokenKind::RightParen) {
+                self.expect(&TokenKind::Arrow)?;
+                return self.arrow_body(params);
+            }
+        }
+    }
+
+    fn arrow_body(&mut self, params: Vec<String>) -> JsResult<Expr> {
+        let body = if self.eat(&TokenKind::LeftBrace) {
+            self.block()?
+        } else {
+            let expr = self.expression()?;
+            vec![Stmt::Return(Some(expr))]
+        };
+        Ok(Expr::ArrowFunction { params, body })
     }
 
     fn function_expr(&mut self) -> JsResult<Expr> {
@@ -607,9 +736,13 @@ impl Parser {
                 TokenKind::Number(n) => n.to_string(),
                 _ => return Err(self.error("expected object property name")),
             };
-            self.expect(&TokenKind::Colon)?;
-            let value = self.expression()?;
-            props.push((key, value));
+            if self.eat(&TokenKind::Colon) {
+                let value = self.expression()?;
+                props.push((key, value));
+            } else {
+                let value = Expr::Identifier(key.clone());
+                props.push((key, value));
+            }
             if self.eat(&TokenKind::RightBrace) {
                 break;
             }
@@ -629,9 +762,12 @@ impl Parser {
     }
 
     fn identifier(&mut self) -> JsResult<String> {
+        self.identifier_token().map(|(name, _)| name)
+    }
+    fn identifier_token(&mut self) -> JsResult<(String, Span)> {
         let token = self.advance().clone();
         if let TokenKind::Identifier(name) = token.kind {
-            Ok(name)
+            Ok((name, token.span))
         } else {
             Err(JsError::parse("expected identifier", token.span))
         }
@@ -639,6 +775,13 @@ impl Parser {
 
     fn optional_semicolon(&mut self) {
         self.eat(&TokenKind::Semicolon);
+    }
+
+    fn at_statement_end_after(&self, previous_span: Span) -> bool {
+        self.at(&TokenKind::Semicolon)
+            || self.at(&TokenKind::RightBrace)
+            || self.at(&TokenKind::Eof)
+            || self.current().span.line > previous_span.line
     }
 
     fn eat(&mut self, kind: &TokenKind) -> bool {
@@ -694,5 +837,30 @@ mod tests {
     #[test]
     fn parses_function() {
         assert!(parse(lex("function f(x){ return x; } f(1);").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn parses_uninitialized_let() {
+        assert!(parse(lex("let x; x;").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn rejects_uninitialized_const() {
+        let error = parse(lex("const x;").unwrap()).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("const declarations must be initialized")
+        );
+    }
+
+    #[test]
+    fn parses_uninitialized_let_before_number() {
+        assert!(parse(lex("let x\n1;").unwrap()).is_ok());
+    }
+    #[test]
+    fn parses_uninitialized_let_before_newline_statement() {
+        assert!(parse(lex("let x\nx = 1;").unwrap()).is_ok());
     }
 }

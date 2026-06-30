@@ -27,6 +27,9 @@ impl Lexer {
     }
 
     fn lex(mut self) -> JsResult<Vec<Token>> {
+        if self.peek() == Some('\u{FEFF}') {
+            self.advance();
+        }
         while let Some(ch) = self.peek() {
             match ch {
                 ' ' | '\t' | '\r' | '\n' => {
@@ -49,17 +52,20 @@ impl Lexer {
                 ':' => self.single(TokenKind::Colon),
                 ',' => self.single(TokenKind::Comma),
                 ';' => self.single(TokenKind::Semicolon),
-                '.' => self.single(TokenKind::Dot),
+                '.' => self.dot_or_spread(),
+                '~' => self.single(TokenKind::Tilde),
+                '^' => self.single(TokenKind::Caret),
                 '!' => self.eq_chain(
                     TokenKind::Bang,
                     TokenKind::NotEqual,
                     TokenKind::StrictNotEqual,
                 ),
-                '=' => self.eq_chain(TokenKind::Assign, TokenKind::Equal, TokenKind::StrictEqual),
-                '<' => self.two(TokenKind::Less, '=', TokenKind::LessEqual),
-                '>' => self.two(TokenKind::Greater, '=', TokenKind::GreaterEqual),
-                '&' => self.double('&', TokenKind::And)?,
-                '|' => self.double('|', TokenKind::Or)?,
+                '=' => self.equals(),
+                '<' => self.less_than(),
+                '>' => self.greater_than(),
+                '&' => self.ampersand(),
+                '|' => self.pipe(),
+                '`' => self.template_string(),
                 '/' => self.slash()?,
                 _ => {
                     return Err(JsError::lex(
@@ -156,6 +162,81 @@ impl Lexer {
         };
         self.tokens.push(Token::new(kind, self.span(s, l, c)));
     }
+    fn ampersand(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = if self.peek() == Some('&') {
+            self.advance();
+            TokenKind::And
+        } else {
+            TokenKind::Ampersand
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn dot_or_spread(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        if self.peek() == Some('.') {
+            self.advance();
+            if self.peek() == Some('.') {
+                self.advance();
+                self.tokens.push(Token::new(TokenKind::DotDotDot, self.span(s, l, c)));
+            } else {
+                self.index -= 2;
+                self.tokens.push(Token::new(TokenKind::Dot, self.span(s, l, c)));
+            }
+        } else {
+            self.tokens.push(Token::new(TokenKind::Dot, self.span(s, l, c)));
+        }
+    }
+    fn pipe(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = if self.peek() == Some('|') {
+            self.advance();
+            TokenKind::Or
+        } else {
+            TokenKind::Pipe
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn less_than(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = match self.peek() {
+            Some('<') => {
+                self.advance();
+                TokenKind::LeftShift
+            }
+            Some('=') => {
+                self.advance();
+                TokenKind::LessEqual
+            }
+            _ => TokenKind::Less,
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn greater_than(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = match self.peek() {
+            Some('>') => {
+                self.advance();
+                if self.peek() == Some('>') {
+                    self.advance();
+                    TokenKind::UnsignedRightShift
+                } else {
+                    TokenKind::RightShift
+                }
+            }
+            Some('=') => {
+                self.advance();
+                TokenKind::GreaterEqual
+            }
+            _ => TokenKind::Greater,
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
     fn eq_chain(&mut self, single: TokenKind, double: TokenKind, triple: TokenKind) {
         let (s, l, c) = (self.byte, self.line, self.column);
         self.advance();
@@ -172,6 +253,27 @@ impl Lexer {
         };
         self.tokens.push(Token::new(kind, self.span(s, l, c)));
     }
+    fn equals(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let kind = match self.peek() {
+            Some('=') => {
+                self.advance();
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::StrictEqual
+                } else {
+                    TokenKind::Equal
+                }
+            }
+            Some('>') => {
+                self.advance();
+                TokenKind::Arrow
+            }
+            _ => TokenKind::Assign,
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
     fn double(&mut self, expected: char, kind: TokenKind) -> JsResult<()> {
         let (s, l, c) = (self.byte, self.line, self.column);
         self.advance();
@@ -184,6 +286,42 @@ impl Lexer {
         self.advance();
         self.tokens.push(Token::new(kind, self.span(s, l, c)));
         Ok(())
+    }
+    fn template_string(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        let mut buf = String::new();
+        while let Some(ch) = self.peek() {
+            if ch == '`' {
+                self.advance();
+                break;
+            }
+            if ch == '\\' {
+                self.advance();
+                if let Some(next) = self.peek() {
+                    self.advance();
+                    buf.push(match next {
+                        'n' => '\n', 't' => '\t', 'r' => '\r',
+                        '\\' => '\\', '`' => '`', '$' => '$',
+                        c => c,
+                    });
+                }
+                continue;
+            }
+            if ch == '$' {
+                self.advance();
+                if self.peek() == Some('{') {
+                    self.advance();
+                    buf.push_str("${");
+                    continue;
+                }
+                buf.push('$');
+                continue;
+            }
+            self.advance();
+            buf.push(ch);
+        }
+        self.tokens.push(Token::new(TokenKind::String(buf), self.span(s, l, c)));
     }
     fn slash(&mut self) -> JsResult<()> {
         match self.peek_next() {
@@ -211,6 +349,68 @@ impl Lexer {
                 ))
             }
             _ => {
+                let (s, l, c) = (self.byte, self.line, self.column);
+                self.advance();
+                let is_regexp = match self.tokens.last() {
+                    None => true,
+                    Some(t) => matches!(
+                        t.kind,
+                        TokenKind::LeftParen | TokenKind::LeftBracket | TokenKind::LeftBrace
+                            | TokenKind::Comma | TokenKind::Semicolon | TokenKind::Colon
+                            | TokenKind::Question | TokenKind::Bang | TokenKind::Tilde
+                            | TokenKind::Assign | TokenKind::PlusAssign | TokenKind::MinusAssign
+                            | TokenKind::StarAssign | TokenKind::SlashAssign | TokenKind::PercentAssign
+                            | TokenKind::Return | TokenKind::Throw | TokenKind::Case
+                            | TokenKind::Delete | TokenKind::Void | TokenKind::Typeof
+                            | TokenKind::In | TokenKind::Instanceof
+                            | TokenKind::Equal | TokenKind::NotEqual | TokenKind::StrictEqual | TokenKind::StrictNotEqual
+                            | TokenKind::Less | TokenKind::LessEqual | TokenKind::Greater | TokenKind::GreaterEqual
+                            | TokenKind::Plus | TokenKind::Minus | TokenKind::Star | TokenKind::Slash | TokenKind::Percent
+                            | TokenKind::And | TokenKind::Or | TokenKind::Ampersand | TokenKind::Pipe | TokenKind::Caret
+                            | TokenKind::LeftShift | TokenKind::RightShift | TokenKind::UnsignedRightShift
+                            | TokenKind::Arrow
+                    ),
+                };
+                if is_regexp {
+                    let mut pattern = String::new();
+                    let mut in_class = false;
+                    let mut valid = true;
+                    loop {
+                        match self.peek() {
+                            None => { valid = false; break; }
+                            Some('\n') => { valid = false; break; }
+                            Some('/') if !in_class => {
+                                self.advance();
+                                break;
+                            }
+                            Some('\\') => {
+                                pattern.push('\\');
+                                self.advance();
+                                if let Some(ch) = self.peek() {
+                                    pattern.push(ch);
+                                    self.advance();
+                                } else { valid = false; break; }
+                            }
+                            Some('[') => { in_class = true; pattern.push('['); self.advance(); }
+                            Some(']') => { in_class = false; pattern.push(']'); self.advance(); }
+                            Some(ch) => { pattern.push(ch); self.advance(); }
+                        }
+                    }
+                    if valid {
+                        let mut flags = String::new();
+                        while let Some(ch) = self.peek() {
+                            if matches!(ch, 'g' | 'i' | 'm' | 's' | 'u' | 'y' | 'd') {
+                                flags.push(ch);
+                                self.advance();
+                            } else { break; }
+                        }
+                        self.tokens.push(Token::new(
+                            TokenKind::RegExp(pattern, flags),
+                            self.span(s, l, c),
+                        ));
+                        return Ok(());
+                    }
+                }
                 self.op_assign(TokenKind::Slash, TokenKind::SlashAssign);
                 Ok(())
             }

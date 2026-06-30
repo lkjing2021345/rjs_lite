@@ -15,37 +15,74 @@
 3. 提供 Agent 可直接消费的结构化 JSON 执行结果。
 4. 为 test262 接入、对象模型、标准库和性能优化预留清晰演进路线。
 
+当前集成与实验开发基线是 `test/all-remote-branches`。该分支汇总了尚未进入 `master` 的本地功能分支，后续标准库与 test262 通过率提升工作应优先基于该分支推进。
+
 ## 当前支持能力
 
 已支持：
 
 - 数字、字符串、布尔值、`null`、`undefined` 字面量
-- `let`、`var` 和 `const` 变量声明，包括多变量声明
+- `let`、`var` 和 `const` 变量声明，包括未初始化 `let` 声明
 - 可变绑定赋值、成员赋值、复合赋值和自增自减
 - 算术、比较、相等、逻辑、一元、`typeof`、`instanceof` 和三元运算符
-- 代码块、`if`、`else`、`while`、`for`、`switch` 和 `break`
+- 代码块、`if`、`else`、`while`、`for`、`switch`、`break` 和 `continue`
 - 函数声明、函数表达式、函数调用、闭包、`this`、`new` 和 `return`
-- 基础对象和数组字面量、成员访问、下标访问、数组 `length` 和原型查找
-- 基础 `throw`、`try`、`catch` 和 `finally`
-- 最小内置能力：`print(value)`、`Object`、`Array`、`String`、`Number`、`Boolean`、`isNaN`、占位版 `JSON.stringify` 和基础错误构造器
-- 小型原型方法面：`Object.prototype.toString`、`Array.prototype.join` 和 `Array.prototype.map`
+- 对象与数组字面量、成员/下标访问、属性赋值、数组 `length` 和原型查找
+- `throw`、`try`、`catch` 和 `finally`
+- 最小宿主内置函数：`print(value)`
+- 小型标准能力：`Object`、`Object.create`、`Object.defineProperty`、`Object.getOwnPropertyDescriptor`、`Object.getPrototypeOf`、`Object.keys`、`Object.values`、`Array`、`Array.isArray`、`String`、`Number`、`Boolean`、`Error` 构造函数、`isNaN`、占位版 `JSON.stringify`、`Object.prototype.toString`、`Object.prototype.hasOwnProperty`、`Object.prototype.propertyIsEnumerable`、`Array.prototype.map`、`Array.prototype.filter`、`Array.prototype.forEach`、`Array.prototype.indexOf`、`Array.prototype.includes`、`Array.prototype.slice`、`Array.prototype.join`、`Array.prototype.push`、`Array.prototype.pop` 和 `Array.prototype.shift`
+- 交互式 REPL，支持多行输入、状态保留和内置命令
 - CLI 执行内联源码或 `.js` 文件
-- `--agent-eval` Agent 工具模式，输出结构化 JSON 结果
+- `--agent-eval` Agent 工具模式，输出结构化 JSON 结果、稳定 `error_kind`、源码大小限制、输出行数限制、执行步数限制和调用深度限制
 - `AgentRuntime`、`ExecutionContext`、`RuntimeLimits` 和 `run_agent_tool` Rust API
-- lexer、parser、interpreter、Agent 模式、CLI 和部分对象/原型行为测试
+- lexer、parser、interpreter、Agent 模式、CLI 和 REPL 的基础测试
+- 可配合外部 test262 checkout 使用的本地 `run_test262.py` runner 脚手架
 
 暂不支持：
 
-- 完整对象、数组、属性描述符和原型语义
-- 完整 ECMAScript 标准库对象
+- 完整对象、数组、属性描述符元数据、原型链和标准库语义
 - class、module、async、generator、promise、regexp、symbol、BigInt
 - 完整 JS 类型隐式转换规则
 - 完整严格模式行为
 - DOM、浏览器 API、npm packages、文件 API、网络 API、进程 API 和 OS API
-- 已发布的 test262 通过率跟踪
+- 随仓库捆绑 test262 checkout 或公开 test262 通过率追踪
 - JIT、字节码虚拟机和高级优化流水线
 
 ## 快速开始
+
+启动交互式 REPL：
+
+```bash
+cargo run
+```
+
+或显式指定：
+
+```bash
+cargo run -- --repl
+```
+
+在 REPL 中逐行输入 JavaScript 代码，变量跨行保持可用。支持多行输入——当花括号或圆括号未闭合时，提示符变为 `...`。输入 `.exit` 或 `.quit` 退出，也可按 Ctrl+D。
+
+```text
+rjs_lite REPL. Type .exit or .quit to exit. Type .help for commands.
+>>> function add(a, b) {
+...   return a + b;
+... }
+>>> add(3, 4);
+7
+>>> .exit
+```
+
+REPL 命令：
+
+| 命令 | 说明 |
+|------|------|
+| `.exit`, `.quit` | 退出 REPL |
+| `.help` | 显示可用命令 |
+| `.clear` | 清屏 |
+| `.reset` | 重置解释器状态（清除所有变量） |
+| `.vars` | 列出已定义变量及其声明类型 |
 
 执行内联 JS：
 
@@ -80,7 +117,7 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 预期输出一行 JSON：
 
 ```json
-{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error_kind":null,"error":null}
 ```
 
 示例程序：
@@ -126,6 +163,7 @@ JS 源码 -> lexer -> tokens -> parser -> AST -> interpreter -> Value
 - `value_type`：运行时类型，例如 `number`、`string`、`boolean`、`object`、`undefined` 或 `function`
 - `output`：通过 `print(value)` 捕获的输出行
 - `output_truncated`：输出是否被限制截断
+- `error_kind`：失败时的稳定错误分类，成功时为 `null`
 - `error`：失败时的诊断信息，成功时为 `null`
 
 Rust 侧可以直接调用：
@@ -136,6 +174,8 @@ println!("{}", result.to_json());
 ```
 
 更多契约说明见 `docs/agent-tool-zh-cn.md`。
+
+当前 JavaScript 子集说明见 `docs/language-subset-zh-cn.md`。
 
 ## 非套壳说明
 
@@ -172,6 +212,8 @@ Agent 工具层同样不调用外部 JS 引擎。`--agent-eval` 只是把本项�
 
 ## 开发与验证
 
+当前功能开发应直接从 `test/all-remote-branches` 创建分支，而不是从 `master` 创建。review 通过后，将功能分支合回 `test/all-remote-branches`，同步更新相关文档，并运行下列验证命令。
+
 格式化代码：
 
 ```bash
@@ -195,15 +237,6 @@ cargo test
 ```bash
 cargo clippy -- -D warnings
 ```
-
-可选 test262 探索：
-
-```bash
-cargo build --release
-python run_test262.py
-```
-
-test262 runner 需要仓库根目录下存在上游 `test262/` 检出目录。它用于本地兼容性探索和结果快照，不代表项目已经发布 test262 通过率声明。
 
 ## 提交说明
 

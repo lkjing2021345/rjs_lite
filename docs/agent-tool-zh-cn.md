@@ -13,10 +13,12 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 示例输出：
 
 ```json
-{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error":null}
+{"ok":true,"request_id":"local","value":"3","value_type":"number","output":["3"],"output_truncated":false,"error_kind":null,"error":null}
 ```
 
 只要工具进程自身成功运行，Agent 模式总是成功退出。JavaScript 解析或运行时失败会以 `ok:false` 编码在 JSON 结果中。
+
+Agent 模式会应用默认运行时限制：源代码上限为 64 KiB，捕获输出上限为 256 行，执行会在 100,000 个解释器步数后停止，嵌套用户自定义函数调用会在 16 帧后停止。
 
 ## 结果字段
 
@@ -26,6 +28,7 @@ cargo run -- --agent-eval "let x = 1 + 2; print(x); x;"
 - `value_type`：运行时类型名称，例如 `number`、`string`、`boolean`、`object`、`undefined` 或 `function`。`null` 遵循 JavaScript 行为，类型报告为 `object`。
 - `output`：捕获到的 `print(value)` 输出行。
 - `output_truncated`：输出是否超过配置的行数限制。
+- `error_kind`：失败时的稳定错误分类，成功时为 `null`。当前取值包括 `lex`、`parse`、`runtime`、`source_limit`、`step_limit` 和 `call_depth_limit`。
 - `error`：失败时的诊断字符串，成功时为 `null`。
 
 ## Rust API
@@ -43,6 +46,8 @@ let runtime = rjs_lite::AgentRuntime::new(rjs_lite::ExecutionContext {
     limits: rjs_lite::RuntimeLimits {
         max_source_bytes: 64 * 1024,
         max_output_lines: 256,
+        max_execution_steps: 100_000,
+        max_call_depth: 16,
     },
     host_functions: vec![rjs_lite::HostFunction {
         name: "print".to_string(),
@@ -59,6 +64,8 @@ let result = runtime.run("print(42);");
 ## 限制
 
 - 只支持已文档化的 MVP JavaScript 子集。
+- Agent 模式会在配置的解释器步数限制后停止执行。
+- Agent 模式会在配置的调用深度限制后停止执行。
 - 不声称具备完整 ECMAScript 兼容性。
 - 尚不声称具备 test262 通过率覆盖。
 - 不提供安全沙箱。

@@ -131,19 +131,23 @@ def run_one(path):
             failed = p.returncode != 0
             err = (p.stderr or "")
             phase = None
+            err_type = None
             if failed:
-                if err.startswith("lex error") or err.startswith("parse error"):
+                if err.startswith("SyntaxError:"):
                     phase = "parse"
                 else:
                     phase = "runtime"
+                m = re.match(r"(\w+Error):", err)
+                if m:
+                    err_type = m.group(1)
 
             if neg:
-                # expect failure at given phase
                 if not failed:
                     return ("fail", "negative-but-passed")
                 if neg["phase"] and phase != neg["phase"]:
                     return ("fail", "phase %s!=%s" % (phase, neg["phase"]))
-                # phase ok (type not checked) -> this mode passes, continue
+                if neg["type"] and err_type and neg["type"] != err_type:
+                    return ("fail", "type %s!=%s" % (neg["type"], err_type))
                 continue
             else:
                 if failed:

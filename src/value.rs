@@ -1,6 +1,6 @@
 use crate::ast::Stmt;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
@@ -18,25 +18,34 @@ pub enum Value {
 
 pub struct Object {
     pub props: HashMap<String, Value>,
+    pub non_enumerable_props: HashSet<String>,
     pub proto: Option<ObjectRef>,
     pub internal: Internal,
 }
 
+pub type ArraySlot = Option<Value>;
+
 #[derive(Clone)]
 pub enum Internal {
     Plain,
-    Array(Vec<Value>),
+    Array(Vec<ArraySlot>),
     Function {
         params: Vec<String>,
         body: Vec<Stmt>,
     },
     Native(&'static str),
+    Bound {
+        target: ObjectRef,
+        bound_this: Value,
+        bound_args: Vec<Value>,
+    },
 }
 
 impl Object {
     pub fn plain() -> ObjectRef {
         Rc::new(RefCell::new(Object {
             props: HashMap::new(),
+            non_enumerable_props: HashSet::new(),
             proto: None,
             internal: Internal::Plain,
         }))
@@ -45,6 +54,7 @@ impl Object {
     pub fn with_internal(internal: Internal) -> ObjectRef {
         Rc::new(RefCell::new(Object {
             props: HashMap::new(),
+            non_enumerable_props: HashSet::new(),
             proto: None,
             internal,
         }))
@@ -71,7 +81,9 @@ pub struct Function {
 
 impl Value {
     pub fn array(items: Vec<Value>) -> Value {
-        Value::Object(Object::with_internal(Internal::Array(items)))
+        Value::Object(Object::with_internal(Internal::Array(
+            items.into_iter().map(Some).collect(),
+        )))
     }
 
     pub fn function(params: Vec<String>, body: Vec<Stmt>) -> Value {
@@ -86,7 +98,7 @@ impl Value {
         matches!(
             self,
             Value::Object(o)
-                if matches!(o.borrow().internal, Internal::Function { .. } | Internal::Native(_))
+                if matches!(o.borrow().internal, Internal::Function { .. } | Internal::Native(_) | Internal::Bound { .. })
         )
     }
 
@@ -108,7 +120,7 @@ impl Value {
             Value::Null => "object",
             Value::Undefined => "undefined",
             Value::Object(o) => match o.borrow().internal {
-                Internal::Function { .. } | Internal::Native(_) => "function",
+                Internal::Function { .. } | Internal::Native(_) | Internal::Bound { .. } => "function",
                 _ => "object",
             },
         }
@@ -131,6 +143,70 @@ impl Value {
             }
             Value::Object(_) => f64::NAN,
         }
+    }
+
+    pub fn to_primitive(&self) -> Value {
+        match self {
+            Value::Object(o) => {
+                let obj = o.borrow();
+                if let Some(v) = obj.props.get("valueOf") {
+                    if v.is_callable() {
+                        return Value::Undefined;
+                    }
+                }
+                if let Some(v) = obj.props.get("toString") {
+                    if v.is_callable() {
+                        return Value::Undefined;
+                    }
+                }
+                match &obj.internal {
+                    Internal::Array(items) => {
+                        let parts: Vec<String> = items
+                            .iter()
+                            .map(|v| match v {
+                                Some(Value::Null | Value::Undefined) | None => String::new(),
+                                Some(other) => other.to_string(),
+                            })
+                            .collect();
+                        Value::String(parts.join(","))
+                    }
+                    Internal::Function { .. } | Internal::Native(_) | Internal::Bound { .. } => {
+                        Value::String("function () { [native code] }".into())
+                    }
+                    Internal::Plain => Value::String("[object Object]".into()),
+                }
+            }
+            other => other.clone(),
+        }
+    }
+
+    pub fn abstract_eq(&self, other: &Value) -> bool {
+        if std::mem::discriminant(self) == std::mem::discriminant(other) {
+            return self == other;
+        }
+        if matches!((self, other), (Value::Null, Value::Undefined) | (Value::Undefined, Value::Null))
+        {
+            return true;
+        }
+        if let (Value::Number(a), Value::String(b)) = (self, other) {
+            return *a == Value::String(b.clone()).to_number();
+        }
+        if let (Value::String(a), Value::Number(b)) = (self, other) {
+            return Value::String(a.clone()).to_number() == *b;
+        }
+        if let Value::Bool(b) = self {
+            return Value::Number(if *b { 1.0 } else { 0.0 }).abstract_eq(other);
+        }
+        if let Value::Bool(b) = other {
+            return self.abstract_eq(&Value::Number(if *b { 1.0 } else { 0.0 }));
+        }
+        if matches!(self, Value::String(_) | Value::Number(_)) && matches!(other, Value::Object(_)) {
+            return self.abstract_eq(&other.to_primitive());
+        }
+        if matches!(self, Value::Object(_)) && matches!(other, Value::String(_) | Value::Number(_)) {
+            return self.to_primitive().abstract_eq(other);
+        }
+        false
     }
 }
 
@@ -163,15 +239,15 @@ impl fmt::Display for Value {
             Value::Object(o) => {
                 let obj = o.borrow();
                 match &obj.internal {
-                    Internal::Function { .. } | Internal::Native(_) => {
+                    Internal::Function { .. } | Internal::Native(_) | Internal::Bound { .. } => {
                         write!(f, "function () {{ [native code] }}")
                     }
                     Internal::Array(items) => {
                         let parts: Vec<String> = items
                             .iter()
                             .map(|v| match v {
-                                Value::Null | Value::Undefined => String::new(),
-                                other => other.to_string(),
+                                Some(Value::Null | Value::Undefined) | None => String::new(),
+                                Some(other) => other.to_string(),
                             })
                             .collect();
                         write!(f, "{}", parts.join(","))
