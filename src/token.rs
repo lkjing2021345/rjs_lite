@@ -69,6 +69,7 @@ pub enum TokenKind {
     Comma,
     Semicolon,
     Dot,
+    DotDotDot,
     Ampersand,
     Pipe,
     Caret,

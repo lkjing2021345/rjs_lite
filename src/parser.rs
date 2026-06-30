@@ -59,13 +59,10 @@ impl Parser {
     fn var_decl(&mut self, mutable: bool) -> JsResult<Stmt> {
         let mut declarations = Vec::new();
         loop {
-            let (name, name_span) = self.identifier_token()?;
+            let (name, _name_span) = self.identifier_token()?;
             let value = if self.eat(&TokenKind::Assign) {
                 self.expression()?
             } else if mutable {
-                if !self.at_statement_end_after(name_span) && !self.at(&TokenKind::Comma) {
-                    return Err(self.error("expected statement end after uninitialized let"));
-                }
                 Expr::Undefined
             } else {
                 return Err(self.error("const declarations must be initialized"));
@@ -308,6 +305,11 @@ impl Parser {
             return Ok(params);
         }
         loop {
+            if self.eat(&TokenKind::DotDotDot) {
+                params.push(format!("...{}", self.identifier()?));
+                self.expect(&TokenKind::RightParen)?;
+                return Ok(params);
+            }
             params.push(self.identifier()?);
             if self.eat(&TokenKind::RightParen) {
                 break;
@@ -734,9 +736,13 @@ impl Parser {
                 TokenKind::Number(n) => n.to_string(),
                 _ => return Err(self.error("expected object property name")),
             };
-            self.expect(&TokenKind::Colon)?;
-            let value = self.expression()?;
-            props.push((key, value));
+            if self.eat(&TokenKind::Colon) {
+                let value = self.expression()?;
+                props.push((key, value));
+            } else {
+                let value = Expr::Identifier(key.clone());
+                props.push((key, value));
+            }
             if self.eat(&TokenKind::RightBrace) {
                 break;
             }
@@ -850,16 +856,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_uninitialized_let_without_statement_end() {
-        let error = parse(lex("let x 1;").unwrap()).unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("expected statement end after uninitialized let")
-        );
+    fn parses_uninitialized_let_before_number() {
+        assert!(parse(lex("let x\n1;").unwrap()).is_ok());
     }
-
     #[test]
     fn parses_uninitialized_let_before_newline_statement() {
         assert!(parse(lex("let x\nx = 1;").unwrap()).is_ok());

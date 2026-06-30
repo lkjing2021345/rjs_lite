@@ -1548,6 +1548,16 @@ impl Interpreter {
                     .borrow_mut()
                     .define("this".into(), this_obj.clone(), true);
                 for (index, name) in params.into_iter().enumerate() {
+                    if name.starts_with("...") {
+                        let rest_name = name[3..].to_string();
+                        let rest: Vec<Option<Value>> = args.iter().skip(index)
+                            .map(|v| Some(v.clone()))
+                            .collect();
+                        let arr = Object::with_internal(Internal::Array(rest));
+                        arr.borrow_mut().proto = Some(self.array_proto.clone());
+                        self.env.borrow_mut().define(rest_name, Value::Object(arr), true);
+                        break;
+                    }
                     let value = args.get(index).cloned().unwrap_or(Value::Undefined);
                     self.env.borrow_mut().define(name, value, true);
                 }

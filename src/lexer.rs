@@ -52,7 +52,7 @@ impl Lexer {
                 ':' => self.single(TokenKind::Colon),
                 ',' => self.single(TokenKind::Comma),
                 ';' => self.single(TokenKind::Semicolon),
-                '.' => self.single(TokenKind::Dot),
+                '.' => self.dot_or_spread(),
                 '~' => self.single(TokenKind::Tilde),
                 '^' => self.single(TokenKind::Caret),
                 '!' => self.eq_chain(
@@ -172,6 +172,22 @@ impl Lexer {
             TokenKind::Ampersand
         };
         self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+    fn dot_or_spread(&mut self) {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance();
+        if self.peek() == Some('.') {
+            self.advance();
+            if self.peek() == Some('.') {
+                self.advance();
+                self.tokens.push(Token::new(TokenKind::DotDotDot, self.span(s, l, c)));
+            } else {
+                self.index -= 2;
+                self.tokens.push(Token::new(TokenKind::Dot, self.span(s, l, c)));
+            }
+        } else {
+            self.tokens.push(Token::new(TokenKind::Dot, self.span(s, l, c)));
+        }
     }
     fn pipe(&mut self) {
         let (s, l, c) = (self.byte, self.line, self.column);
