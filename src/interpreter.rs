@@ -144,6 +144,10 @@ impl Interpreter {
                 .borrow_mut()
                 .props
                 .insert("prototype".into(), Value::Object(self.array_proto.clone()));
+            array_ctor
+                .borrow_mut()
+                .props
+                .insert("isArray".into(), self.native_method("Array.isArray"));
             self.array_proto
                 .borrow_mut()
                 .props
@@ -831,6 +835,12 @@ impl Interpreter {
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
+            "Array.isArray" => {
+                let is_array = args
+                    .first()
+                    .is_some_and(|value| matches!(value, Value::Object(object) if matches!(object.borrow().internal, Internal::Array(_))));
+                Ok(Value::Bool(is_array))
+            }
             "String" => Ok(Value::String(
                 args.first()
                     .cloned()
@@ -982,6 +992,18 @@ mod tests {
     #[test]
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_is_array_detects_array_literals_and_constructor_arrays() {
+        let src = "Array.isArray([]) && Array.isArray(Array(1,2));";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_is_array_rejects_plain_objects_and_missing_values() {
+        let src = "(!Array.isArray({})) && (!Array.isArray()) && (!Array.isArray('x'));";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 
