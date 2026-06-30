@@ -167,6 +167,8 @@ impl Interpreter {
         self.define_native("SyntaxError");
         self.define_native("ReferenceError");
         self.define_native("RangeError");
+        self.define_native("EvalError");
+        self.define_native("URIError");
         self.define_native("Object");
         self.define_native("Array");
         self.define_native("String");
@@ -178,6 +180,7 @@ impl Interpreter {
         self.define_native("parseFloat");
         self.define_native("eval");
         self.define_native("Function");
+        self.define_native("RegExp");
 
         self.define_global("Infinity", Value::Number(f64::INFINITY), false);
         self.define_global("NaN", Value::Number(f64::NAN), false);
@@ -633,6 +636,8 @@ impl Interpreter {
             "SyntaxError",
             "ReferenceError",
             "RangeError",
+            "EvalError",
+            "URIError",
         ] {
             if let Some(Value::Object(ctor)) = self.env.borrow().get(name) {
                 Self::define_non_enumerable(
@@ -1086,6 +1091,19 @@ impl Interpreter {
                     result.push_str(&self.eval_expr(part)?.to_string());
                 }
                 Ok(Value::String(result))
+            }
+            Expr::RegExp { pattern, flags } => {
+                let obj = Object::plain();
+                obj.borrow_mut().proto = Some(self.object_proto.clone());
+                let mut p = obj.borrow_mut();
+                p.props.insert("source".into(), Value::String(pattern.clone()));
+                p.props.insert("flags".into(), Value::String(flags.clone()));
+                p.props.insert("lastIndex".into(), Value::Number(0.0));
+                drop(p);
+                for method in ["test", "exec"] {
+                    Self::define_non_enumerable(&obj, method, self.native_method("RegExp.prototype."));
+                }
+                Ok(Value::Object(obj))
             }
             Expr::Unary { op, expr } => {
                 let value = self.eval_expr(expr)?;
@@ -1563,7 +1581,7 @@ impl Interpreter {
                 );
                 Ok(Value::Undefined)
             }
-            "Error" | "TypeError" | "SyntaxError" | "ReferenceError" | "RangeError" => {
+            "Error" | "TypeError" | "SyntaxError" | "ReferenceError" | "RangeError" | "EvalError" | "URIError" => {
                 let obj = Object::plain();
                 obj.borrow_mut().proto = Some(self.error_proto.clone());
                 obj.borrow_mut()
@@ -2960,6 +2978,56 @@ impl Interpreter {
                     return Ok(Value::Object(make_iterator(arr, 0)));
                 }
                 Ok(Value::Object(make_empty_iterator()))
+            }
+            "RegExp.prototype.test" => {
+                let input = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let pattern = if let Value::Object(ref o) = this_value {
+                    o.borrow().props.get("source").cloned().unwrap_or(Value::String(String::new())).to_string()
+                } else { String::new() };
+                let flags = if let Value::Object(ref o) = this_value {
+                    o.borrow().props.get("flags").cloned().unwrap_or(Value::String(String::new())).to_string()
+                } else { String::new() };
+                let case_insensitive = flags.contains('i');
+                let found = if case_insensitive {
+                    input.to_lowercase().contains(&pattern.to_lowercase())
+                } else {
+                    input.contains(&pattern)
+                };
+                Ok(Value::Bool(found))
+            }
+            "RegExp.prototype.exec" => {
+                let input = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let pattern = if let Value::Object(ref o) = this_value {
+                    o.borrow().props.get("source").cloned().unwrap_or(Value::String(String::new())).to_string()
+                } else { String::new() };
+                let flags = if let Value::Object(ref o) = this_value {
+                    o.borrow().props.get("flags").cloned().unwrap_or(Value::String(String::new())).to_string()
+                } else { String::new() };
+                let case_insensitive = flags.contains('i');
+                let found = if case_insensitive {
+                    input.to_lowercase().contains(&pattern.to_lowercase())
+                } else {
+                    input.contains(&pattern)
+                };
+                if found {
+                    let pos = if case_insensitive {
+                        input.to_lowercase().find(&pattern.to_lowercase()).unwrap_or(0)
+                    } else {
+                        input.find(&pattern).unwrap_or(0)
+                    };
+                    let result = vec![
+                        Some(Value::String(input[pos..pos + pattern.len()].to_string())),
+                        Some(Value::Number(pos as f64)),
+                        Some(Value::String(input.clone())),
+                    ];
+                    let obj = Object::with_internal(Internal::Array(result));
+                    obj.borrow_mut().proto = Some(self.array_proto.clone());
+                    obj.borrow_mut().props.insert("index".into(), Value::Number(pos as f64));
+                    obj.borrow_mut().props.insert("input".into(), Value::String(input));
+                    Ok(Value::Object(obj))
+                } else {
+                    Ok(Value::Null)
+                }
             }
             _ => {
                 if let Some(func) = construct {

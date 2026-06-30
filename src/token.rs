@@ -78,6 +78,7 @@ pub enum TokenKind {
     UnsignedRightShift,
     Arrow,
     Backtick,
+    RegExp(String, String),
     Eof,
 }
 

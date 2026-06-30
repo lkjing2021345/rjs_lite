@@ -333,6 +333,68 @@ impl Lexer {
                 ))
             }
             _ => {
+                let (s, l, c) = (self.byte, self.line, self.column);
+                self.advance();
+                let is_regexp = match self.tokens.last() {
+                    None => true,
+                    Some(t) => matches!(
+                        t.kind,
+                        TokenKind::LeftParen | TokenKind::LeftBracket | TokenKind::LeftBrace
+                            | TokenKind::Comma | TokenKind::Semicolon | TokenKind::Colon
+                            | TokenKind::Question | TokenKind::Bang | TokenKind::Tilde
+                            | TokenKind::Assign | TokenKind::PlusAssign | TokenKind::MinusAssign
+                            | TokenKind::StarAssign | TokenKind::SlashAssign | TokenKind::PercentAssign
+                            | TokenKind::Return | TokenKind::Throw | TokenKind::Case
+                            | TokenKind::Delete | TokenKind::Void | TokenKind::Typeof
+                            | TokenKind::In | TokenKind::Instanceof
+                            | TokenKind::Equal | TokenKind::NotEqual | TokenKind::StrictEqual | TokenKind::StrictNotEqual
+                            | TokenKind::Less | TokenKind::LessEqual | TokenKind::Greater | TokenKind::GreaterEqual
+                            | TokenKind::Plus | TokenKind::Minus | TokenKind::Star | TokenKind::Slash | TokenKind::Percent
+                            | TokenKind::And | TokenKind::Or | TokenKind::Ampersand | TokenKind::Pipe | TokenKind::Caret
+                            | TokenKind::LeftShift | TokenKind::RightShift | TokenKind::UnsignedRightShift
+                            | TokenKind::Arrow
+                    ),
+                };
+                if is_regexp {
+                    let mut pattern = String::new();
+                    let mut in_class = false;
+                    let mut valid = true;
+                    loop {
+                        match self.peek() {
+                            None => { valid = false; break; }
+                            Some('\n') => { valid = false; break; }
+                            Some('/') if !in_class => {
+                                self.advance();
+                                break;
+                            }
+                            Some('\\') => {
+                                pattern.push('\\');
+                                self.advance();
+                                if let Some(ch) = self.peek() {
+                                    pattern.push(ch);
+                                    self.advance();
+                                } else { valid = false; break; }
+                            }
+                            Some('[') => { in_class = true; pattern.push('['); self.advance(); }
+                            Some(']') => { in_class = false; pattern.push(']'); self.advance(); }
+                            Some(ch) => { pattern.push(ch); self.advance(); }
+                        }
+                    }
+                    if valid {
+                        let mut flags = String::new();
+                        while let Some(ch) = self.peek() {
+                            if matches!(ch, 'g' | 'i' | 'm' | 's' | 'u' | 'y' | 'd') {
+                                flags.push(ch);
+                                self.advance();
+                            } else { break; }
+                        }
+                        self.tokens.push(Token::new(
+                            TokenKind::RegExp(pattern, flags),
+                            self.span(s, l, c),
+                        ));
+                        return Ok(());
+                    }
+                }
                 self.op_assign(TokenKind::Slash, TokenKind::SlashAssign);
                 Ok(())
             }

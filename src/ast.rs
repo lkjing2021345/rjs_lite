@@ -80,6 +80,10 @@ pub enum Expr {
     TemplateLiteral {
         parts: Vec<Expr>,
     },
+    RegExp {
+        pattern: String,
+        flags: String,
+    },
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,

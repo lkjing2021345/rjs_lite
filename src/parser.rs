@@ -644,6 +644,10 @@ impl Parser {
             TokenKind::This => Ok(Expr::This),
             TokenKind::Identifier(s) => Ok(Expr::Identifier(s)),
             TokenKind::Function => self.function_expr(),
+            TokenKind::RegExp(pattern, flags) => Ok(Expr::RegExp {
+                pattern: pattern.clone(),
+                flags: flags.clone(),
+            }),
             TokenKind::LeftParen => {
                 let saved = self.pos;
                 if let Ok(af) = self.try_arrow_function() {
