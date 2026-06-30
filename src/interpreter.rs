@@ -120,9 +120,7 @@ impl Interpreter {
 
         let json = Object::plain();
         json.borrow_mut().proto = Some(self.object_proto.clone());
-        json.borrow_mut()
-            .props
-            .insert("stringify".into(), self.native_method("JSON.stringify"));
+        Self::define_non_enumerable(&json, "stringify", self.native_method("JSON.stringify"));
         self.define_global("JSON", Value::Object(json), false);
 
         self.function_proto.borrow_mut().proto = Some(self.object_proto.clone());
@@ -130,34 +128,41 @@ impl Interpreter {
         self.error_proto.borrow_mut().proto = Some(self.object_proto.clone());
 
         if let Some(Value::Object(object_ctor)) = self.env.borrow().get("Object") {
-            object_ctor
-                .borrow_mut()
-                .props
-                .insert("prototype".into(), Value::Object(self.object_proto.clone()));
-            self.object_proto.borrow_mut().props.insert(
-                "toString".into(),
+            Self::define_non_enumerable(
+                &object_ctor,
+                "prototype",
+                Value::Object(self.object_proto.clone()),
+            );
+            Self::define_non_enumerable(
+                &self.object_proto,
+                "toString",
                 self.native_method("Object.prototype.toString"),
+            );
+            Self::define_non_enumerable(
+                &self.object_proto,
+                "propertyIsEnumerable",
+                self.native_method("Object.prototype.propertyIsEnumerable"),
             );
         }
         if let Some(Value::Object(array_ctor)) = self.env.borrow().get("Array") {
-            array_ctor
-                .borrow_mut()
-                .props
-                .insert("prototype".into(), Value::Object(self.array_proto.clone()));
-            self.array_proto
-                .borrow_mut()
-                .props
-                .insert("map".into(), self.native_method("Array.prototype.map"));
-            self.array_proto
-                .borrow_mut()
-                .props
-                .insert("join".into(), self.native_method("Array.prototype.join"));
+            Self::define_non_enumerable(
+                &array_ctor,
+                "prototype",
+                Value::Object(self.array_proto.clone()),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "map",
+                self.native_method("Array.prototype.map"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "join",
+                self.native_method("Array.prototype.join"),
+            );
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
-            string_ctor
-                .borrow_mut()
-                .props
-                .insert("prototype".into(), Value::Object(Object::plain()));
+            Self::define_non_enumerable(&string_ctor, "prototype", Value::Object(Object::plain()));
         }
         for name in [
             "Error",
@@ -167,11 +172,19 @@ impl Interpreter {
             "RangeError",
         ] {
             if let Some(Value::Object(ctor)) = self.env.borrow().get(name) {
-                ctor.borrow_mut()
-                    .props
-                    .insert("prototype".into(), Value::Object(self.error_proto.clone()));
+                Self::define_non_enumerable(
+                    &ctor,
+                    "prototype",
+                    Value::Object(self.error_proto.clone()),
+                );
             }
         }
+    }
+
+    fn define_non_enumerable(object: &ObjectRef, property: &str, value: Value) {
+        let mut object = object.borrow_mut();
+        object.props.insert(property.to_string(), value);
+        object.non_enumerable_props.insert(property.to_string());
     }
 
     fn define_native(&mut self, name: &'static str) {
@@ -182,9 +195,7 @@ impl Interpreter {
     fn native_method(&self, name: &'static str) -> Value {
         let obj = Object::with_internal(Internal::Native(name));
         obj.borrow_mut().proto = Some(self.function_proto.clone());
-        obj.borrow_mut()
-            .props
-            .insert("prototype".into(), Value::Object(Object::plain()));
+        Self::define_non_enumerable(&obj, "prototype", Value::Object(Object::plain()));
         Value::Object(obj)
     }
 
@@ -399,13 +410,8 @@ impl Interpreter {
         obj.borrow_mut().proto = Some(self.function_proto.clone());
         let proto = Object::plain();
         proto.borrow_mut().proto = Some(self.object_proto.clone());
-        proto
-            .borrow_mut()
-            .props
-            .insert("constructor".into(), Value::Object(obj.clone()));
-        obj.borrow_mut()
-            .props
-            .insert("prototype".into(), Value::Object(proto));
+        Self::define_non_enumerable(&proto, "constructor", Value::Object(obj.clone()));
+        Self::define_non_enumerable(&obj, "prototype", Value::Object(proto));
         let value = Value::Object(obj.clone());
         self.remember_closure(&value);
         value
@@ -440,7 +446,8 @@ impl Interpreter {
                     .iter()
                     .map(|e| self.eval_expr(e))
                     .collect::<JsResult<Vec<_>>>()?;
-                let obj = Object::with_internal(Internal::Array(values));
+                let obj =
+                    Object::with_internal(Internal::Array(values.into_iter().map(Some).collect()));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
@@ -644,7 +651,7 @@ impl Interpreter {
                 return Value::Number(items.len() as f64);
             }
             if let Ok(i) = property.parse::<usize>() {
-                return items.get(i).cloned().unwrap_or(Value::Undefined);
+                return items.get(i).cloned().flatten().unwrap_or(Value::Undefined);
             }
         }
         Object::lookup(object, property).unwrap_or(Value::Undefined)
@@ -655,15 +662,15 @@ impl Interpreter {
             if property == "length" {
                 let n = value.to_number();
                 if n.is_finite() && n >= 0.0 && n.fract() == 0.0 {
-                    items.resize(n as usize, Value::Undefined);
+                    items.resize(n as usize, None);
                 }
                 return;
             }
             if let Ok(i) = property.parse::<usize>() {
                 if i >= items.len() {
-                    items.resize(i + 1, Value::Undefined);
+                    items.resize(i + 1, None);
                 }
-                items[i] = value;
+                items[i] = Some(value);
                 return;
             }
         }
@@ -671,6 +678,19 @@ impl Interpreter {
             .borrow_mut()
             .props
             .insert(property.to_string(), value);
+    }
+
+    fn is_own_enumerable_property(&self, object: &ObjectRef, property: &str) -> bool {
+        let object = object.borrow();
+        if let Internal::Array(items) = &object.internal {
+            if property == "length" {
+                return false;
+            }
+            if let Ok(index) = property.parse::<usize>() {
+                return items.get(index).is_some_and(Option::is_some);
+            }
+        }
+        object.props.contains_key(property) && !object.non_enumerable_props.contains(property)
     }
 
     fn binary(&self, left: Value, op: BinaryOp, right: Value) -> JsResult<Value> {
@@ -827,7 +847,8 @@ impl Interpreter {
                 }
             }
             "Array" => {
-                let obj = Object::with_internal(Internal::Array(args));
+                let obj =
+                    Object::with_internal(Internal::Array(args.into_iter().map(Some).collect()));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
@@ -872,6 +893,17 @@ impl Interpreter {
                     _ => "Object",
                 }
             ))),
+            "Object.prototype.propertyIsEnumerable" => {
+                let key = args
+                    .first()
+                    .cloned()
+                    .unwrap_or(Value::Undefined)
+                    .to_string();
+                let Value::Object(object) = this_value else {
+                    return Ok(Value::Bool(false));
+                };
+                Ok(Value::Bool(self.is_own_enumerable_property(&object, &key)))
+            }
             "Array.prototype.join" => {
                 let sep = args
                     .first()
@@ -883,7 +915,7 @@ impl Interpreter {
                     return Ok(Value::String(
                         items
                             .iter()
-                            .map(|v| v.to_string())
+                            .map(|v| v.clone().unwrap_or(Value::Undefined).to_string())
                             .collect::<Vec<_>>()
                             .join(&sep),
                     ));
@@ -903,13 +935,15 @@ impl Interpreter {
                         .map(|v| {
                             self.call(
                                 callback.clone(),
-                                vec![v],
+                                vec![v.unwrap_or(Value::Undefined)],
                                 Value::Object(self.global.clone()),
                                 false,
                             )
                         })
                         .collect::<JsResult<Vec<_>>>()?;
-                    let obj = Object::with_internal(Internal::Array(mapped));
+                    let obj = Object::with_internal(Internal::Array(
+                        mapped.into_iter().map(Some).collect(),
+                    ));
                     obj.borrow_mut().proto = Some(self.array_proto.clone());
                     return Ok(Value::Object(obj));
                 }
@@ -982,6 +1016,42 @@ mod tests {
     #[test]
     fn array_length_assignment_truncates() {
         let src = "let a=[1,2,3]; a.length=1; (a[1] === undefined) && (a.length === 1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn property_is_enumerable_detects_own_object_property() {
+        let src = "let o={a:1}; o.propertyIsEnumerable('a');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn property_is_enumerable_ignores_prototype_property() {
+        let src = "let o={}; o.propertyIsEnumerable('toString');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn property_is_enumerable_detects_array_index_but_not_length() {
+        let src = "let a=[10]; a.propertyIsEnumerable('0') && !a.propertyIsEnumerable('length');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn property_is_enumerable_detects_array_named_property() {
+        let src = "let a=[]; a.extra=1; a.propertyIsEnumerable('extra');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn property_is_enumerable_ignores_length_created_array_holes() {
+        let src = "let a=[]; a.length=1; a.propertyIsEnumerable('0');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn property_is_enumerable_ignores_runtime_installed_properties() {
+        let src = "function C(){} (!Object.prototype.propertyIsEnumerable('toString')) && (!Array.prototype.propertyIsEnumerable('join')) && (!C.propertyIsEnumerable('prototype'));";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
     }
 
