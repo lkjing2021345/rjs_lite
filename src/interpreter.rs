@@ -253,6 +253,11 @@ impl Interpreter {
             );
             Self::define_non_enumerable(
                 &self.array_proto,
+                "indexOf",
+                self.native_method("Array.prototype.indexOf"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
                 "push",
                 self.native_method("Array.prototype.push"),
             );
@@ -1228,6 +1233,35 @@ impl Interpreter {
                 }
                 Ok(Value::String(String::new()))
             }
+            "Array.prototype.indexOf" => {
+                let needle = args.first().cloned().unwrap_or(Value::Undefined);
+                let from_index = args
+                    .get(1)
+                    .cloned()
+                    .unwrap_or(Value::Number(0.0))
+                    .to_number();
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    let len = items.len() as isize;
+                    let mut start = if from_index.is_nan() {
+                        0
+                    } else if from_index < 0.0 {
+                        len + from_index as isize
+                    } else {
+                        from_index as isize
+                    };
+                    if start < 0 {
+                        start = 0;
+                    }
+                    for (index, value) in items.iter().enumerate().skip(start as usize) {
+                        if value.as_ref().is_some_and(|value| *value == needle) {
+                            return Ok(Value::Number(index as f64));
+                        }
+                    }
+                }
+                Ok(Value::Number(-1.0))
+            }
             "Array.prototype.push" => {
                 if let Value::Object(o) = this_value
                     && let Internal::Array(items) = &mut o.borrow_mut().internal
@@ -1478,6 +1512,42 @@ mod tests {
     fn array_is_array_is_not_enumerable() {
         let src = "(!Array.propertyIsEnumerable('isArray')) && Object.keys(Array).length === 0;";
         assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_index_of_finds_first_matching_value() {
+        let src = "[3,4,3].indexOf(3);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn array_index_of_returns_minus_one_when_missing() {
+        let src = "[1,2].indexOf(3);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(-1.0));
+    }
+
+    #[test]
+    fn array_index_of_uses_positive_from_index() {
+        let src = "[1,2,1].indexOf(1,1);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(2.0));
+    }
+
+    #[test]
+    fn array_index_of_uses_negative_from_index() {
+        let src = "[1,2,3,2].indexOf(2,-2);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(3.0));
+    }
+
+    #[test]
+    fn array_index_of_skips_holes() {
+        let src = "let a=[]; a.length=1; a.indexOf(undefined);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(-1.0));
+    }
+
+    #[test]
+    fn array_index_of_is_not_enumerable() {
+        let src = "Array.prototype.propertyIsEnumerable('indexOf');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
     }
 
     #[test]
