@@ -913,10 +913,12 @@ impl Interpreter {
             } => {
                 let mut result = match self.with_child(block)? {
                     Flow::Throw(v) => {
-                        if let (Some(param), Some(catch)) = (catch_param, catch_block) {
+                        if let Some(catch) = catch_block {
                             let previous = self.env.clone();
                             self.env = Env::child(previous.clone());
-                            self.env.borrow_mut().define(param.clone(), v, true);
+                            if let Some(param) = catch_param {
+                                self.env.borrow_mut().define(param.clone(), v, true);
+                            }
                             let r = self.eval_statements(catch);
                             self.env = previous;
                             r?
@@ -927,8 +929,11 @@ impl Interpreter {
                     other => other,
                 };
                 if let Some(finally) = finally_block {
-                    let finally_result = self.with_child(finally)?;
-                    if !matches!(finally_result, Flow::Value(_)) {
+                    // finally always runs; its throw/return/break/continue
+                    // override the pending result per ECMAScript.
+                    if let Ok(finally_result) = self.with_child(finally)
+                        && !matches!(finally_result, Flow::Value(_))
+                    {
                         result = finally_result;
                     }
                 }
@@ -4361,6 +4366,253 @@ mod tests {
         "#;
 
         assert_eq!(run_source(src).unwrap(), Value::String("boom:true".into()));
+    }
+
+    #[test]
+    fn catch_without_parameter_still_runs_catch_block() {
+        let src = r#"
+            let out = "";
+            try {
+                throw 1;
+            } catch {
+                out = "caught";
+            }
+            out;
+        "#;
+        assert_eq!(run_source(src).unwrap(), Value::String("caught".into()));
+    }
+
+    #[test]
+    fn throw_in_try_without_catch_propagates() {
+        let error = run_source("try { throw 1; } finally { }").unwrap_err();
+        assert!(error.to_string().contains("1"));
+    }
+
+    #[test]
+    fn finally_runs_when_try_throws_without_catch() {
+        let src = r#"
+            let out = "";
+            try {
+                throw 1;
+            } finally {
+                out = "finally";
+            }
+            "after";
+        "#;
+        let error = run_source(src).unwrap_err();
+        assert!(error.to_string().contains("1"));
+    }
+
+    #[test]
+    fn finally_runs_when_catch_throws_and_replaces_throw() {
+        let src = r#"
+            let out = "";
+            try {
+                throw 1;
+            } catch (e) {
+                throw 2;
+            } finally {
+                out = "finally";
+            }
+            out;
+        "#;
+        let error = run_source(src).unwrap_err();
+        assert!(error.to_string().contains("2"));
+    }
+
+    #[test]
+    fn finally_throw_replaces_catch_throw() {
+        let src = r#"
+            try {
+                throw 1;
+            } catch (e) {
+                throw 2;
+            } finally {
+                throw 3;
+            }
+        "#;
+        let error = run_source(src).unwrap_err();
+        assert!(error.to_string().contains("3"));
+    }
+
+    #[test]
+    fn finally_throw_replaces_uncaught_throw() {
+        let src = r#"
+            try {
+                throw 1;
+            } finally {
+                throw 3;
+            }
+        "#;
+        let error = run_source(src).unwrap_err();
+        assert!(error.to_string().contains("3"));
+    }
+
+    #[test]
+    fn finally_runs_before_return_from_try() {
+        let src = r#"
+            function f() {
+                try {
+                    return 1;
+                } finally {
+                    print("fin");
+                }
+            }
+            f();
+        "#;
+        let (value, output) = crate::run_source_with_output(src).unwrap();
+        assert_eq!(value, Value::Number(1.0));
+        assert_eq!(output, vec!["fin".to_string()]);
+    }
+
+    #[test]
+    fn finally_return_replaces_try_return() {
+        let src = r#"
+            function f() {
+                try {
+                    return 1;
+                } finally {
+                    return 2;
+                }
+            }
+            f();
+        "#;
+        assert_eq!(run_source(src).unwrap(), Value::Number(2.0));
+    }
+
+    #[test]
+    fn finally_return_replaces_catch_return() {
+        let src = r#"
+            function f() {
+                try {
+                    throw 1;
+                } catch (e) {
+                    return 2;
+                } finally {
+                    return 3;
+                }
+            }
+            f();
+        "#;
+        assert_eq!(run_source(src).unwrap(), Value::Number(3.0));
+    }
+
+    #[test]
+    fn finally_throw_replaces_try_return() {
+        let src = r#"
+            function f() {
+                try {
+                    return 1;
+                } finally {
+                    throw 3;
+                }
+            }
+            f();
+        "#;
+        let error = run_source(src).unwrap_err();
+        assert!(error.to_string().contains("3"));
+    }
+
+    #[test]
+    fn nested_try_finally_runs_then_inner_throw_wins() {
+        let src = r#"
+            let out = "";
+            try {
+                try {
+                    throw 1;
+                } catch (e) {
+                    throw 2;
+                } finally {
+                    out = "inner";
+                }
+            } catch (e) {
+                out = out + ":" + e;
+            }
+            out;
+        "#;
+        assert_eq!(run_source(src).unwrap(), Value::String("inner:2".into()));
+    }
+
+    #[test]
+    fn throw_undefined_is_caught_and_prints_typeof() {
+        let src = r#"
+            let out = "";
+            try {
+                throw undefined;
+            } catch (e) {
+                out = typeof e;
+            }
+            out;
+        "#;
+        assert_eq!(run_source(src).unwrap(), Value::String("undefined".into()));
+    }
+
+    #[test]
+    fn try_without_throw_runs_finally_only() {
+        let src = r#"
+            let out = "";
+            try {
+                out = "a";
+            } catch (e) {
+                out = "b";
+            } finally {
+                out = out + "c";
+            }
+            out;
+        "#;
+        assert_eq!(run_source(src).unwrap(), Value::String("ac".into()));
+    }
+
+    #[test]
+    fn break_in_finally_wins_over_try_value() {
+        let src = r#"
+            let out = "";
+            let i = 0;
+            while (i < 3) {
+                i = i + 1;
+                try {
+                    out = "tried";
+                } finally {
+                    break;
+                }
+            }
+            out + ":" + i;
+        "#;
+        assert_eq!(run_source(src).unwrap(), Value::String("tried:1".into()));
+    }
+
+    #[test]
+    fn continue_in_finally_wins_over_try_value() {
+        let src = r#"
+            let out = "";
+            let i = 0;
+            while (i < 3) {
+                i = i + 1;
+                try {
+                    out = out + "x";
+                } finally {
+                    continue;
+                }
+            }
+            out + ":" + i;
+        "#;
+        assert_eq!(run_source(src).unwrap(), Value::String("xxx:3".into()));
+    }
+
+    #[test]
+    fn finally_value_does_not_override_pending_result() {
+        let src = r#"
+            let out = "";
+            try {
+                out = "try";
+            } catch (e) {
+                out = "catch";
+            } finally {
+                42;
+            }
+            out;
+        "#;
+        assert_eq!(run_source(src).unwrap(), Value::String("try".into()));
     }
 
     #[test]

@@ -126,9 +126,10 @@ impl Parser {
         let mut catch_block = None;
         let mut finally_block = None;
         if self.eat(&TokenKind::Catch) {
-            self.expect(&TokenKind::LeftParen)?;
-            catch_param = Some(self.identifier()?);
-            self.expect(&TokenKind::RightParen)?;
+            if self.eat(&TokenKind::LeftParen) {
+                catch_param = Some(self.identifier()?);
+                self.expect(&TokenKind::RightParen)?;
+            }
             self.expect(&TokenKind::LeftBrace)?;
             catch_block = Some(self.block()?);
         }

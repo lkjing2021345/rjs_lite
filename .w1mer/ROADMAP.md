@@ -35,7 +35,7 @@
 |---|------|-----|--------|--------|
 | 01 | Harden object/array/property-descriptor/prototype semantics | 01.md | done | Added Object.prototype.valueOf, toLocaleString, isPrototypeOf; 2026-09-29 |
 | 02 | Expand standard library (remaining Array/Object/String methods) | 02.md | done | Added Array.prototype.at, String.prototype.at/codePointAt/replaceAll/localeCompare/search/match, Object.fromEntries/defineProperties, Number.isSafeInteger; 2026-09-29 |
-| 03 | Harden exception semantics (try/catch/finally edge cases) | 03.md | todo | |
+| 03 | Harden exception semantics (try/catch/finally edge cases) | 03.md | done | Fixed 8 edge cases: parameterless catch, finally always runs, finally throw/return/break/continue override pending result, nested try; 15 new tests; 2026-09-29 |
 <!-- w1mer:task:feature -->
 
 ## 四、Infrastructure
