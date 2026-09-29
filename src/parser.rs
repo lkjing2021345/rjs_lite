@@ -654,12 +654,19 @@ impl Parser {
                 self.expect(&TokenKind::RightBracket)?;
                 break;
             }
-            let mut element = self.pattern()?;
-            if self.eat(&TokenKind::Assign) {
-                let default = self.assignment()?;
-                element = Pattern::Default(Box::new(element), default);
+            // Elision: a `,` at the start of an element means a hole.
+            // Represent it as an Identifier placeholder with a default of
+            // undefined (the interpreter binds undefined for holes).
+            if self.at(&TokenKind::Comma) {
+                elements.push(Pattern::Identifier("".to_string()));
+            } else {
+                let mut element = self.pattern()?;
+                if self.eat(&TokenKind::Assign) {
+                    let default = self.assignment()?;
+                    element = Pattern::Default(Box::new(element), default);
+                }
+                elements.push(element);
             }
-            elements.push(element);
             if self.eat(&TokenKind::RightBracket) {
                 break;
             }
@@ -687,6 +694,28 @@ impl Parser {
                 self.eat(&TokenKind::Comma);
                 self.expect(&TokenKind::RightBrace)?;
                 break;
+            }
+            // Computed property: `[expr]: pattern`
+            if self.at(&TokenKind::LeftBracket) {
+                self.advance();
+                let key_expr = self.expression()?;
+                self.expect(&TokenKind::RightBracket)?;
+                self.expect(&TokenKind::Colon)?;
+                let mut pattern = self.pattern()?;
+                if self.eat(&TokenKind::Assign) {
+                    let default = self.assignment()?;
+                    pattern = Pattern::Default(Box::new(pattern), default);
+                }
+                let key = format!("computed:{}", Self::key_expr_to_string(&key_expr));
+                entries.push(ObjectPatternEntry { key, value: pattern });
+                if self.eat(&TokenKind::RightBrace) {
+                    break;
+                }
+                self.expect(&TokenKind::Comma)?;
+                if self.eat(&TokenKind::RightBrace) {
+                    break;
+                }
+                continue;
             }
             let key = match self.advance().clone().kind {
                 TokenKind::Identifier(s) | TokenKind::String(s) => s,
