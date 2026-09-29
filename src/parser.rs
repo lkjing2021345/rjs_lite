@@ -27,6 +27,8 @@ impl Parser {
             self.var_decl(false)
         } else if self.eat(&TokenKind::Function) {
             self.function_decl()
+        } else if self.eat(&TokenKind::Async) {
+            self.async_function_decl()
         } else if self.eat(&TokenKind::Return) {
             self.return_stmt()
         } else if self.eat(&TokenKind::Throw) {
@@ -95,6 +97,22 @@ impl Parser {
         self.expect(&TokenKind::LeftBrace)?;
         let body = self.block()?;
         // Allow an optional trailing semicolon after the function body.
+        self.optional_semicolon();
+        Ok(Stmt::FunctionDecl {
+            name,
+            params,
+            body,
+        })
+    }
+
+    fn async_function_decl(&mut self) -> JsResult<Stmt> {
+        // `async function name(...) { ... }`
+        self.expect(&TokenKind::Function)?;
+        let name = self.identifier()?;
+        self.expect(&TokenKind::LeftParen)?;
+        let params = self.params()?;
+        self.expect(&TokenKind::LeftBrace)?;
+        let body = self.block()?;
         self.optional_semicolon();
         Ok(Stmt::FunctionDecl {
             name,
@@ -634,6 +652,8 @@ impl Parser {
                 callee: Box::new(callee),
                 args,
             })
+        } else if self.eat(&TokenKind::Await) {
+            Ok(Expr::Await(Box::new(self.unary()?)))
         } else if self.eat(&TokenKind::Tilde) {
             Ok(Expr::Unary {
                 op: UnaryOp::BitwiseNot,
@@ -770,6 +790,7 @@ impl Parser {
             TokenKind::This => Ok(Expr::This),
             TokenKind::Identifier(s) => Ok(Expr::Identifier(s)),
             TokenKind::Function => self.function_expr(),
+            TokenKind::Async => self.async_function_expr(),
             TokenKind::RegExp(pattern, flags) => Ok(Expr::RegExp {
                 pattern: pattern.clone(),
                 flags: flags.clone(),
@@ -824,6 +845,30 @@ impl Parser {
             params,
             body: self.block()?,
         })
+    }
+
+    fn async_function_expr(&mut self) -> JsResult<Expr> {
+        // `async function (...) { ... }` or `async (params) => body`
+        if self.eat(&TokenKind::Function) {
+            self.expect(&TokenKind::LeftParen)?;
+            let params = self.params()?;
+            self.expect(&TokenKind::LeftBrace)?;
+            return Ok(Expr::AsyncFunction {
+                params,
+                body: self.block()?,
+            });
+        }
+        // `async (params) => body`
+        self.expect(&TokenKind::LeftParen)?;
+        let params = self.params()?;
+        self.expect(&TokenKind::Arrow)?;
+        let body = if self.eat(&TokenKind::LeftBrace) {
+            self.block()?
+        } else {
+            let expr = self.expression()?;
+            vec![Stmt::Return(Some(expr))]
+        };
+        Ok(Expr::AsyncFunction { params, body })
     }
 
     fn parse_template_string(&mut self, s: String) -> JsResult<Expr> {

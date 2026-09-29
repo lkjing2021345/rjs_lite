@@ -35,6 +35,8 @@ pub enum Internal {
         /// Bytecode function index (1-based, matches `program.functions` offset).
         /// Set by the VM's `make_function`; 0 means "not yet compiled".
         func_index: usize,
+        /// True for `async function` / `async (params) =>`.
+        is_async: bool,
     },
     Native(&'static str),
     Bound {
@@ -90,7 +92,7 @@ impl Value {
     }
 
     pub fn function(params: Vec<Pattern>, body: Vec<Stmt>) -> Value {
-        Value::Object(Object::with_internal(Internal::Function { params, body, func_index: 0 }))
+        Value::Object(Object::with_internal(Internal::Function { params, body, func_index: 0, is_async: false }))
     }
 
     pub fn native(name: &'static str) -> Value {

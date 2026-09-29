@@ -1083,7 +1083,11 @@ impl Interpreter {
     }
 
     fn make_function(&mut self, params: Vec<Pattern>, body: Vec<Stmt>) -> Value {
-        let obj = Object::with_internal(Internal::Function { params, body, func_index: 0 });
+        self.make_function_async(params, body, false)
+    }
+
+    fn make_function_async(&mut self, params: Vec<Pattern>, body: Vec<Stmt>, is_async: bool) -> Value {
+        let obj = Object::with_internal(Internal::Function { params, body, func_index: 0, is_async });
         obj.borrow_mut().proto = Some(self.function_proto.clone());
         let proto = Object::plain();
         proto.borrow_mut().proto = Some(self.object_proto.clone());
@@ -1271,6 +1275,7 @@ impl Interpreter {
                     params: params.clone(),
                     body: body.clone(),
                     func_index: 0,
+                    is_async: false,
                 });
                 obj.borrow_mut().proto = Some(self.function_proto.clone());
                 let proto = Object::plain();
@@ -1280,6 +1285,16 @@ impl Interpreter {
                 let value = Value::Object(obj.clone());
                 self.remember_closure(&value);
                 Ok(value)
+            }
+            Expr::AsyncFunction { params, body } => {
+                Ok(self.make_function_async(params.clone(), body.clone(), true))
+            }
+            Expr::Await(expr) => {
+                // In a synchronous interpreter, `await` just evaluates the
+                // expression. If the result is a Promise (native), we return
+                // it as-is for now — full async scheduling is out of scope.
+                let v = self.eval_expr(expr)?;
+                Ok(v)
             }
             Expr::Assign { target, value } => {
                 let value = self.eval_expr(value)?;

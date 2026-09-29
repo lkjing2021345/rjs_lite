@@ -99,6 +99,13 @@ pub enum Expr {
         params: Vec<Pattern>,
         body: Vec<Stmt>,
     },
+    /// `async function` expression / `async (params) =>` arrow.
+    AsyncFunction {
+        params: Vec<Pattern>,
+        body: Vec<Stmt>,
+    },
+    /// `await expr` — only valid inside async function bodies.
+    Await(Box<Expr>),
     TemplateLiteral {
         parts: Vec<Expr>,
     },

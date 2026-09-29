@@ -416,6 +416,17 @@ impl<'a> Compiler<'a> {
                 let idx = self.compile_function(params, body);
                 self.emit(Instruction::PushFunction(idx));
             }
+            Expr::AsyncFunction { params, body } => {
+                // In the VM, async functions run synchronously (no real
+                // scheduling). `await` is a no-op passthrough.
+                let idx = self.compile_function(params, body);
+                self.emit(Instruction::PushFunction(idx));
+            }
+            Expr::Await(expr) => {
+                // `await` evaluates the operand; in our synchronous VM the
+                // result is returned as-is.
+                self.emit_expr(expr);
+            }
             Expr::TemplateLiteral { parts } => {
                 self.emit(Instruction::PushString(String::new()));
                 for part in parts {

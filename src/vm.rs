@@ -923,6 +923,7 @@ impl Vm {
             params: params.clone(),
             body: Vec::new(),
             func_index: index + 1,
+            is_async: false,
         });
         obj.borrow_mut().proto = Some(self.native.function_proto.clone());
         let proto = Object::plain();
