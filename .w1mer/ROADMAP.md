@@ -20,7 +20,7 @@
 
 | # | Task | Doc | Status | Effect |
 |---|------|-----|--------|--------|
-| 05 | Add microbenchmarks (arithmetic, loops, function calls, object access) | 05.md | todo | |
+| 05 | Add microbenchmarks (arithmetic, loops, function calls, object access) | 05.md | done | 4 benchmark functions (arithmetic, loops, function calls, object access); 2026-09-29 0ce9cab |
 <!-- w1mer:task:perf -->
 
 ## 二、Bug fixes
