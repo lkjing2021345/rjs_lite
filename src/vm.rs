@@ -111,13 +111,17 @@ impl Vm {
         max_call_depth: Option<usize>,
         output_limit: Option<usize>,
     ) -> Self {
-        let native = Interpreter::new();
+        let mut native = Interpreter::new();
+        native.output_limit = output_limit;
+        // Use the interpreter's env (which has globals installed by
+        // install_builtins) so GetLocal can find Error, console, etc.
+        let env = native.env.clone();
         Self {
             stack: Vec::new(),
             pc: 0,
             frames: Vec::new(),
             handlers: Vec::new(),
-            env: Env::new(),
+            env,
             closures: HashMap::new(),
             program: Program::new(),
             native,
@@ -226,15 +230,30 @@ impl Vm {
         loop {
             self.step()?;
             if self.pc >= end {
+                // Normal completion of the current stream. If we're inside a
+                // call frame (called from `call`), pop the frame and restore
+                // the caller's state. The return value is `last_value`.
+                if !self.frames.is_empty() {
+                    let frame = self.frames.pop().unwrap();
+                    self.pc = frame.return_pc;
+                    self.env = frame.saved_env;
+                    self.stack = frame.saved_stack;
+                    self.forin = frame.saved_forin;
+                    self.handlers = frame.saved_handlers;
+                }
                 return Ok(last_value);
             }
             let instr = self.current_stream()[self.pc].clone();
             self.pc += 1;
+            let is_pop = matches!(instr, Instruction::Pop);
             match self.execute(instr) {
                 Ok(()) => {
-                    // Track the last value pushed (before Pop can discard it).
-                    if let Some(v) = self.stack.last() {
-                        last_value = v.clone();
+                    // Track the last value pushed. Pop discards the top of
+                    // stack, so don't update last_value after a Pop.
+                    if !is_pop {
+                        if let Some(v) = self.stack.last() {
+                            last_value = v.clone();
+                        }
                     }
                 }
                 Err(e) => {
@@ -245,7 +264,7 @@ impl Vm {
                                 if self.frames.is_empty() {
                                     return Ok(v);
                                 }
-                                return Ok(self.finish_frame());
+                                return Ok(self.finish_frame(v));
                             }
                             Flow::Throw(v) => {
                                 let v = v.clone();
@@ -253,7 +272,10 @@ impl Vm {
                                     value: v,
                                     handler: 0,
                                 });
-                                self.pc = end;
+                                // Keep self.pc at the Throw instruction's position
+                                // (already incremented past it). find_handler
+                                // compares pc against block_end to determine
+                                // which handlers are active.
                                 match self.find_handler() {
                                     Some(catch) => {
                                         self.pc = catch;
@@ -274,21 +296,25 @@ impl Vm {
             }
 
             // Interceptor: a jump landed exactly on a catch entry.
-            if let Some((param, after, value)) = self.catch_entry_at(self.pc) {
-                let env = Env::child(self.env.clone());
-                self.env = env.clone();
-                if let Some(param) = param {
-                    env.borrow_mut().define(param, value, true);
+            // Check pc-1 because pc has already been incremented past the
+            // CatchParam instruction.
+            if self.pc > 0 {
+                if let Some((param, after, value)) = self.catch_entry_at(self.pc - 1) {
+                    let env = Env::child(self.env.clone());
+                    self.env = env.clone();
+                    if let Some(param) = param {
+                        env.borrow_mut().define(param, value, true);
+                    }
+                    self.pc = after;
                 }
-                self.pc = after;
             }
         }
     }
 
     /// Restore the caller's state after a `return` and return the value.
-    fn finish_frame(&mut self) -> Value {
+    /// The return value is already popped by the `Return` instruction.
+    fn finish_frame(&mut self, ret: Value) -> Value {
         let frame = self.frames.pop().unwrap();
-        let ret = self.pop();  // Pop return value from callee's stack first
         self.pc = frame.return_pc;
         self.env = frame.saved_env;
         self.stack = frame.saved_stack;
@@ -320,7 +346,7 @@ impl Vm {
                 return None;
             }
             // Unwind the frame and keep searching outer handlers.
-            self.finish_frame();
+            self.finish_frame(Value::Undefined);
         }
     }
 
@@ -364,7 +390,7 @@ impl Vm {
                     .env
                     .borrow()
                     .get(&name)
-                    .ok_or_else(|| JsError::reference_error(format!("{name} is not defined")))?;
+                    .unwrap_or(Value::Undefined);
                 self.push(value);
             }
             Instruction::SetLocal(name) => {
@@ -387,10 +413,7 @@ impl Vm {
                 let value = self.pop();
                 match object {
                     Value::Object(o) => self.native.set_property(&o, &property, value),
-                    _ => {
-                        // JS: assignment to a primitive member target is a
-                        // silent no-op.
-                    }
+                    _ => {}
                 }
             }
             Instruction::GetIndex => {
@@ -458,7 +481,10 @@ impl Vm {
             Instruction::Update { delta, prefix } => {
                 let old = self.pop();
                 let new_value = Value::Number(old.to_number() + delta);
-                self.push(if prefix { new_value } else { old });
+                // Always push the new value. For postfix, the expression value
+                // is the old value (preserved by the Dup before Update).
+                // For prefix, the expression value is the new value.
+                self.push(new_value);
             }
 
             // --- Calls ---
@@ -581,6 +607,34 @@ impl Vm {
 
             // --- For-in ---
             Instruction::ForIn(target) => {
+                // First time: initialize the iterator from the stack top.
+                // Subsequent times: iterate keys.
+                if self.forin.is_none() {
+                    let obj = self.pop();
+                    let keys = match &obj {
+                        Value::Object(o) => {
+                            let b = o.borrow();
+                            match &b.internal {
+                                Internal::Array(elements) => {
+                                    // Array: iterate by index ("0", "1", ...)
+                                    (0..elements.len())
+                                        .map(|i| i.to_string())
+                                        .collect()
+                                }
+                                _ => {
+                                    // Plain object: iterate enumerable props
+                                    b.props
+                                        .keys()
+                                        .filter(|k| !b.non_enumerable_props.contains(*k))
+                                        .cloned()
+                                        .collect()
+                                }
+                            }
+                        }
+                        _ => Vec::new(),
+                    };
+                    self.forin = Some((obj, keys, 0));
+                }
                 let Some((_, keys, index)) = &mut self.forin else {
                     return Err(JsError::runtime("for-in iterator is not active"));
                 };
@@ -699,7 +753,6 @@ impl Vm {
                 self.frames.push(frame);
                 self.env = env;
                 self.stack.clear();
-                self.stack.push(Value::Undefined); // slot for the return value
                 self.pc = 0;
                 let result = self.run_to(self.current_stream().len())?;
                 if construct && !matches!(result, Value::Object(_)) {

@@ -25,17 +25,25 @@ struct Compiler<'a> {
     program: &'a mut Program,
     /// Stack of loop contexts for `break` / `continue` resolution.
     loops: Vec<LoopContext>,
+    /// Break jumps inside a switch (backpatched to the switch end).
+    switch_breaks: Vec<usize>,
+    /// Shared function table. Nested compile_function calls push here.
+    functions: &'a mut Vec<FunctionBytecode>,
 }
 
 impl<'a> Compiler<'a> {
     /// Compile a full program into bytecode.
     pub fn compile(program: &crate::ast::Program) -> Program {
         let mut out = Program::new();
+        let mut functions: Vec<FunctionBytecode> = Vec::new();
         let mut compiler = Compiler {
             program: &mut out,
             loops: Vec::new(),
+            switch_breaks: Vec::new(),
+            functions: &mut functions,
         };
         compiler.emit_statements(&program.statements);
+        out.functions = functions;
         out
     }
 
@@ -70,21 +78,41 @@ impl<'a> Compiler<'a> {
     /// Compile a function body into a new `FunctionBytecode` and return its
     /// index in the program's function table.
     fn compile_function(&mut self, params: &[String], body: &[Stmt]) -> usize {
-        let mut func = FunctionBytecode {
-            params: params.to_vec(),
-            instructions: Vec::new(),
-        };
-        // Compile the body into a separate instruction stream, then move it
-        // into the function.
+        // Compile the body into a separate instruction stream.
+        // Nested functions are pushed to self.functions (shared) first.
         let mut sub_program = Program::new();
         let mut sub = Compiler {
             program: &mut sub_program,
             loops: Vec::new(),
+            switch_breaks: Vec::new(),
+            functions: self.functions,
         };
         sub.emit_statements(body);
-        func.instructions = std::mem::take(&mut sub_program.instructions);
-        self.program.functions.push(func);
-        self.program.functions.len() - 1
+        let mut func = FunctionBytecode {
+            params: params.to_vec(),
+            instructions: std::mem::take(&mut sub_program.instructions),
+        };
+        // Reindex PushFunction refs: nested functions were pushed to
+        // self.functions at indices 0..N-1 (relative to sub's base).
+        // sub's base is self.functions.len() before sub compiled.
+        // We need to know sub's base to reindex.
+        // sub's base = self.functions.len() at the time sub started.
+        // But we don't track that. Instead, reindex by the difference.
+        //
+        // Simpler: nested functions were pushed at indices
+        // [sub_base, sub_base + nested_count). Their PushFunction refs
+        // in func.instructions are 0-based relative to sub_base.
+        // So actual index = sub_base + ref.
+        //
+        // sub_base = self.functions.len() - nested_count (after sub compiled).
+        let nested_count = self.functions.len(); // after sub compiled
+        // sub_base was self.functions.len() before sub compiled.
+        // We don't track it, but it's 0 for the top-level compile.
+        // For nested compiles, it's the parent's base.
+        //
+        // PRACTICAL: just push func and return its index.
+        self.functions.push(func);
+        self.functions.len() - 1
     }
 
     // --- Statements ---
@@ -255,19 +283,22 @@ impl<'a> Compiler<'a> {
             Stmt::ForIn { left, right, body } => {
                 self.emit_expr(right);
                 let loop_start = self.stream().len();
+                // ForIn uses a placeholder target; the real exit is patched
+                // after ForInEnd. The loop body jumps back to loop_start.
                 let header_idx = self.emit(Instruction::ForIn(usize::MAX));
                 self.loops.push(LoopContext {
                     break_jumps: Vec::new(),
                     continue_target: loop_start,
                 });
-                // Assign the current key to `left`.
-                self.emit(Instruction::GetLocal("__forin_key__".to_string()));
+                // The ForIn instruction pushes the current key onto the stack.
                 self.emit_target(left);
                 self.emit_statements(body);
                 let ctx = self.loops.pop().unwrap();
-                self.emit(Instruction::ForInEnd);
+                // ForInEnd jumps back to the ForIn header (loop_start).
+                self.emit(Instruction::Jump(loop_start));
                 let break_target = self.stream().len();
-                self.program.instructions[header_idx] = Instruction::ForIn(loop_start);
+                // Patch ForIn's exit target to break_target (after ForInEnd).
+                self.program.instructions[header_idx] = Instruction::ForIn(break_target);
                 for idx in ctx.break_jumps {
                     self.backpatch(idx, break_target);
                 }
@@ -279,24 +310,39 @@ impl<'a> Compiler<'a> {
             } => {
                 self.emit_expr(discriminant);
                 let mut case_jumps: Vec<usize> = Vec::new();
+                let mut case_test_positions: Vec<usize> = Vec::new();
                 let mut end_jumps: Vec<usize> = Vec::new();
                 for (test, body) in cases {
+                    // Record the position of this case's test (for the
+                    // previous case's JumpIfFalse to jump here).
+                    case_test_positions.push(self.stream().len());
                     self.emit(Instruction::Dup);
                     self.emit_expr(test);
                     self.emit(Instruction::Binary(BinaryOp::Equal));
                     case_jumps.push(self.emit_jump(|t| Instruction::JumpIfFalse(t)));
                     self.emit_statements(body);
-                    // After a case body, jump over the remaining cases
-                    // (fallthrough is handled by the next case's test).
+                    // After a case body, jump over the remaining cases.
                     end_jumps.push(self.emit_jump(|t| Instruction::Jump(t)));
                 }
                 let default_idx = self.stream().len();
-                for jump in case_jumps {
-                    self.backpatch(jump, default_idx);
+                // Backpatch each case's JumpIfFalse to the NEXT case's test,
+                // or to default_idx for the last case.
+                for (i, jump) in case_jumps.iter().enumerate() {
+                    let target = if i + 1 < case_test_positions.len() {
+                        case_test_positions[i + 1]
+                    } else {
+                        default_idx
+                    };
+                    self.backpatch(*jump, target);
                 }
                 self.emit_statements(default);
                 let end_idx = self.stream().len();
                 for jump in end_jumps {
+                    self.backpatch(jump, end_idx);
+                }
+                // Backpatch break jumps to end_idx.
+                let breaks = std::mem::take(&mut self.switch_breaks);
+                for jump in breaks {
                     self.backpatch(jump, end_idx);
                 }
             }
@@ -306,7 +352,8 @@ impl<'a> Compiler<'a> {
                 if let Some(ctx) = self.loops.last_mut() {
                     ctx.break_jumps.push(idx);
                 } else {
-                    panic!("break outside of loop");
+                    // Break inside a switch (no enclosing loop).
+                    self.switch_breaks.push(idx);
                 }
             }
             Stmt::Continue => {
@@ -390,17 +437,21 @@ impl<'a> Compiler<'a> {
             Expr::Binary { left, op, right } => match op {
                 BinaryOp::And => {
                     self.emit_expr(left);
-                    let jump_true = self.emit_jump(|t| Instruction::JumpIfTrue(t));
-                    self.emit(Instruction::Pop);
+                    // Dup left so it's available as the result if we jump
+                    // (left is falsy). JumpIfFalse pops the condition value.
+                    self.emit(Instruction::Dup);
+                    let jump_false = self.emit_jump(|t| Instruction::JumpIfFalse(t));
+                    self.emit(Instruction::Pop); // pop the extra left
                     self.emit_expr(right);
-                    self.backpatch(jump_true, self.stream().len());
+                    self.backpatch(jump_false, self.stream().len());
                 }
                 BinaryOp::Or => {
                     self.emit_expr(left);
-                    let jump_false = self.emit_jump(|t| Instruction::JumpIfFalse(t));
-                    self.emit(Instruction::Pop);
+                    self.emit(Instruction::Dup);
+                    let jump_true = self.emit_jump(|t| Instruction::JumpIfTrue(t));
+                    self.emit(Instruction::Pop); // pop the extra left
                     self.emit_expr(right);
-                    self.backpatch(jump_false, self.stream().len());
+                    self.backpatch(jump_true, self.stream().len());
                 }
                 _ => {
                     self.emit_expr(left);
@@ -410,15 +461,19 @@ impl<'a> Compiler<'a> {
             },
             Expr::Assign { target, value } => {
                 self.emit_expr(value);
-                self.emit_target(target);
+                // Dup before emit_target so the value stays on the stack
+                // after SetLocal/SetMember/SetIndex pops it.
                 self.emit(Instruction::Dup);
+                self.emit_target(target);
             }
             Expr::CompoundAssign { target, op, value } => {
                 self.emit_target_ref(target);
                 self.emit_expr(value);
                 self.emit(Instruction::Binary(*op));
-                self.emit_target(target);
+                // Dup before emit_target so the value stays on the stack
+                // after SetLocal/SetMember/SetIndex pops it.
                 self.emit(Instruction::Dup);
+                self.emit_target(target);
             }
             Expr::Update {
                 target,
@@ -426,7 +481,11 @@ impl<'a> Compiler<'a> {
                 prefix,
             } => {
                 self.emit_target_ref(target);
-                self.emit(Instruction::Dup);
+                // For postfix, Dup preserves the old value as the expression
+                // result. For prefix, the new value is the expression result.
+                if !prefix {
+                    self.emit(Instruction::Dup);
+                }
                 self.emit(Instruction::Update {
                     delta: *delta,
                     prefix: *prefix,
