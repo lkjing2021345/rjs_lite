@@ -45,7 +45,13 @@
 | 04 | Set up test262 subset runner with pass-rate tracking | 04.md | done | Runner: CLI subset filtering, 8 failure categories, per-category breakdown, test262_report.json; 2026-09-29 da8f4a8 |
 <!-- w1mer:task:infra -->
 
-## 五、Backlog
+## 七、test262 Optimization
+
+| # | Task | Doc | Status | Effect |
+|---|------|-----|--------|--------|
+| 09 | Baseline test262 pass rate + initial fixes | 09.md | doing | language 28.6%→34.4% (500 sample); added arguments object, eval(), strict mode guards, trailing semicolon fix; 2026-09-29 |
+| 10 | Improve test262 pass rate (parse errors, runtime errors) | 10.md | todo | |
+<!-- w1mer:task:test262 -->
 
 (Items awaiting re-prioritization)
 - class, module, async, generator, promise, symbol, BigInt
