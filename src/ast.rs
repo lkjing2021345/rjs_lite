@@ -93,6 +93,7 @@ pub enum Expr {
     Array(Vec<Expr>),
     Object(Vec<(String, Expr)>),
     Function {
+        name: Option<String>,
         params: Vec<Pattern>,
         body: Vec<Stmt>,
     },
@@ -102,6 +103,7 @@ pub enum Expr {
     },
     /// `async function` expression / `async (params) =>` arrow.
     AsyncFunction {
+        name: Option<String>,
         params: Vec<Pattern>,
         body: Vec<Stmt>,
     },

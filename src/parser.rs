@@ -899,22 +899,26 @@ impl Parser {
     }
 
     fn function_expr(&mut self) -> JsResult<Expr> {
+        let name = self.optional_identifier()?;
         self.expect(&TokenKind::LeftParen)?;
         let params = self.params()?;
         self.expect(&TokenKind::LeftBrace)?;
         Ok(Expr::Function {
+            name,
             params,
             body: self.block()?,
         })
     }
 
     fn async_function_expr(&mut self) -> JsResult<Expr> {
-        // `async function (...) { ... }` or `async (params) => body`
+        // `async function [name] (...) { ... }` or `async (params) => body`
         if self.eat(&TokenKind::Function) {
+            let name = self.optional_identifier()?;
             self.expect(&TokenKind::LeftParen)?;
             let params = self.params()?;
             self.expect(&TokenKind::LeftBrace)?;
             return Ok(Expr::AsyncFunction {
+                name,
                 params,
                 body: self.block()?,
             });
@@ -929,7 +933,11 @@ impl Parser {
             let expr = self.expression()?;
             vec![Stmt::Return(Some(expr))]
         };
-        Ok(Expr::AsyncFunction { params, body })
+        Ok(Expr::AsyncFunction {
+            name: None,
+            params,
+            body,
+        })
     }
 
     fn parse_template_string(&mut self, s: String) -> JsResult<Expr> {
@@ -1043,6 +1051,14 @@ impl Parser {
     fn identifier(&mut self) -> JsResult<String> {
         self.identifier_token().map(|(name, _)| name)
     }
+    /// Capture an optional function name (Identifier) that follows `function`.
+    fn optional_identifier(&mut self) -> JsResult<Option<String>> {
+        if matches!(self.peek().kind, TokenKind::Identifier(_)) {
+            Ok(Some(self.identifier()?))
+        } else {
+            Ok(None)
+        }
+    }
     fn identifier_token(&mut self) -> JsResult<(String, Span)> {
         let token = self.advance().clone();
         if let TokenKind::Identifier(name) = token.kind {
@@ -1088,6 +1104,10 @@ impl Parser {
         self.tokens
             .get(self.pos)
             .unwrap_or_else(|| self.tokens.last().expect("lexer emits eof"))
+    }
+
+    fn peek(&self) -> &Token {
+        self.current()
     }
 
     fn advance(&mut self) -> &Token {

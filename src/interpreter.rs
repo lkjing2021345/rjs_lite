@@ -1270,7 +1270,7 @@ impl Interpreter {
                 }
                 Ok(Value::Object(obj))
             }
-            Expr::Function { params, body } => Ok(self.make_function(params.clone(), body.clone())),
+            Expr::Function { name: _, params, body } => Ok(self.make_function(params.clone(), body.clone())),
             Expr::ArrowFunction { params, body } => {
                 let obj = Object::with_internal(Internal::Function {
                     params: params.clone(),
@@ -1287,7 +1287,7 @@ impl Interpreter {
                 self.remember_closure(&value);
                 Ok(value)
             }
-            Expr::AsyncFunction { params, body } => {
+            Expr::AsyncFunction { name: _, params, body } => {
                 Ok(self.make_function_async(params.clone(), body.clone(), true))
             }
             Expr::Await(expr) => {

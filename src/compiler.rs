@@ -409,7 +409,7 @@ impl<'a> Compiler<'a> {
                     self.emit(Instruction::SetObjectProperty(key.clone()));
                 }
             }
-            Expr::Function { params, body } => {
+            Expr::Function { name: _, params, body } => {
                 let idx = self.compile_function(params, body);
                 self.emit(Instruction::PushFunction(idx));
             }
@@ -417,7 +417,7 @@ impl<'a> Compiler<'a> {
                 let idx = self.compile_function(params, body);
                 self.emit(Instruction::PushFunction(idx));
             }
-            Expr::AsyncFunction { params, body } => {
+            Expr::AsyncFunction { name: _, params, body } => {
                 // In the VM, async functions run synchronously (no real
                 // scheduling). `await` is a no-op passthrough.
                 let idx = self.compile_function(params, body);
