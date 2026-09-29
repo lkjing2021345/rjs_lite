@@ -42,7 +42,7 @@
 
 | # | Task | Doc | Status | Effect |
 |---|------|-----|--------|--------|
-| 04 | Set up test262 subset runner with pass-rate tracking | 04.md | todo | |
+| 04 | Set up test262 subset runner with pass-rate tracking | 04.md | doing | Runner: CLI subset filtering (--category/--skip-category/--limit), 8 failure categories, per-category breakdown, test262_report.json (date/commit/pass-rate/failure categories); 2026-09-29 — **commit + smoke run pending** (no shell available in implementer session) |
 <!-- w1mer:task:infra -->
 
 ## 五、Backlog

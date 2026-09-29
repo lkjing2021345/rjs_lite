@@ -20,5 +20,6 @@ __pycache__/
 # test result
 
 test262_result.json
+test262_report.json
 
 test262/
