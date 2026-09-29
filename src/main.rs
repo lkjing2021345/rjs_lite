@@ -17,7 +17,12 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    match args.as_slice() {
+    let (use_vm, rest) = if args.first().map(String::as_str) == Some("--vm") {
+        (true, args[1..].to_vec())
+    } else {
+        (false, args)
+    };
+    match rest.as_slice() {
         [] => repl(),
         [flag] if flag == "--help" || flag == "-h" => {
             println!("{}", usage());
@@ -25,11 +30,11 @@ fn run() -> Result<(), String> {
         }
         [flag] if flag == "--repl" => repl(),
         [flag, source] if flag == "--agent-eval" => execute_agent_tool(source),
-        [flag, source] if flag == "-e" || flag == "--eval" => execute(source),
+        [flag, source] if flag == "-e" || flag == "--eval" => execute(source, use_vm),
         [path] => {
             let source = fs::read_to_string(path)
                 .map_err(|err| format!("failed to read `{path}`: {err}"))?;
-            execute(&source)
+            execute(&source, use_vm)
         }
         _ => Err(usage()),
     }
@@ -155,9 +160,12 @@ fn execute_agent_tool(source: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn execute(source: &str) -> Result<(), String> {
-    let (value, output) =
-        rjs_lite::run_source_with_output(source).map_err(|err| err.to_string())?;
+fn execute(source: &str, use_vm: bool) -> Result<(), String> {
+    let (value, output) = if use_vm {
+        rjs_lite::run_vm_source_with_output(source).map_err(|err| err.to_string())?
+    } else {
+        rjs_lite::run_source_with_output(source).map_err(|err| err.to_string())?
+    };
     for line in output {
         println!("{line}");
     }
@@ -168,5 +176,5 @@ fn execute(source: &str) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "Usage:\n  rjs_lite                  start REPL\n  rjs_lite --repl           start REPL\n  rjs_lite -e \"...\"          evaluate inline source\n  rjs_lite --agent-eval \"...\" agent tool mode\n  rjs_lite path/to/file.js   evaluate file\n\nA lightweight JavaScript execution runtime for AI Agent tool calls.".to_string()
+    "Usage:\n  rjs_lite                  start REPL\n  rjs_lite --repl           start REPL\n  rjs_lite -e \"...\"          evaluate inline source\n  rjs_lite --vm -e \"...\"     evaluate with bytecode VM\n  rjs_lite --agent-eval \"...\" agent tool mode\n  rjs_lite path/to/file.js   evaluate file\n\nA lightweight JavaScript execution runtime for AI Agent tool calls.".to_string()
 }

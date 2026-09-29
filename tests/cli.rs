@@ -927,3 +927,139 @@ fn repl_dot_help_shows_commands() {
     assert!(stdout.contains(".vars"), "should mention .vars: {stdout}");
     assert!(stdout.contains(".reset"), "should mention .reset: {stdout}");
 }
+
+// --- VM parity tests: --vm flag should produce same output as interpreter ---
+
+fn run_cli(args: &[&str]) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_rjs_lite"))
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "CLI failed: {args:?}");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn run_both(source: &str) -> (String, String) {
+    let interp = run_cli(&["-e", source]);
+    let vm = run_cli(&["--vm", "-e", source]);
+    (interp, vm)
+}
+
+#[test]
+fn vm_parity_arithmetic() {
+    let (i, v) = run_both("let x = 1 + 2 * 3; x;");
+    assert_eq!(i, "7");
+    assert_eq!(v, "7");
+}
+
+#[test]
+fn vm_parity_functions_and_loops() {
+    let src = "function add(a,b){return a+b;} let t=0; for(let i=0;i<4;i++){t=t+add(i,1);} t;";
+    let (i, v) = run_both(src);
+    assert_eq!(i, "10");
+    assert_eq!(v, "10");
+}
+
+#[test]
+fn vm_parity_closures() {
+    let src = "function make(){let x=1;return function(){x=x+1;return x;};} let f=make();f()+f();";
+    let (i, v) = run_both(src);
+    assert_eq!(i, "5");
+    assert_eq!(v, "5");
+}
+
+#[test]
+fn vm_parity_string_ops() {
+    let (i, v) = run_both("'hello'.toUpperCase();");
+    assert_eq!(i, "HELLO");
+    assert_eq!(v, "HELLO");
+}
+
+#[test]
+fn vm_parity_object_literal() {
+    let (i, v) = run_both("let o={a:1,b:2}; o.a + o.b;");
+    assert_eq!(i, "3");
+    assert_eq!(v, "3");
+}
+
+#[test]
+fn vm_parity_array_literal() {
+    let (i, v) = run_both("let a=[1,2,3]; a.length;");
+    assert_eq!(i, "3");
+    assert_eq!(v, "3");
+}
+
+#[test]
+fn vm_parity_try_catch() {
+    let src = "try { throw 1; } catch(e) { e; }";
+    let (i, v) = run_both(src);
+    assert_eq!(i, "1");
+    assert_eq!(v, "1");
+}
+
+#[test]
+fn vm_parity_while_loop() {
+    let src = "let x=0; while(x<5){x=x+1;} x;";
+    let (i, v) = run_both(src);
+    assert_eq!(i, "5");
+    assert_eq!(v, "5");
+}
+
+#[test]
+fn vm_parity_conditional() {
+    let src = "let x = 1 > 0 ? 'yes' : 'no'; x;";
+    let (i, v) = run_both(src);
+    assert_eq!(i, "yes");
+    assert_eq!(v, "yes");
+}
+
+#[test]
+fn vm_parity_template_literal() {
+    let src = "let x=42; `value is ${x}`;";
+    let (i, v) = run_both(src);
+    assert_eq!(i, "value is 42");
+    assert_eq!(v, "value is 42");
+}
+
+#[test]
+fn vm_parity_typeof() {
+    let (i, v) = run_both("typeof 42;");
+    assert_eq!(i, "number");
+    assert_eq!(v, "number");
+}
+
+#[test]
+fn vm_parity_short_circuit() {
+    let src = "let x = null || 'default'; x;";
+    let (i, v) = run_both(src);
+    assert_eq!(i, "default");
+    assert_eq!(v, "default");
+}
+
+#[test]
+fn vm_parity_for_in_object() {
+    let src = "let o={a:1,b:2}; let keys=[]; for(let k in o){keys.push(k);} keys.join(',');";
+    let (i, v) = run_both(src);
+    // Both must contain both keys; order may differ between engines.
+    for expected in ["a", "b"] {
+        assert!(i.contains(expected), "interpreter missing {expected}: {i}");
+        assert!(v.contains(expected), "vm missing {expected}: {v}");
+    }
+    assert_eq!(i.len(), v.len());
+}
+
+#[test]
+fn vm_parity_method_call() {
+    let src = "let o={x:3,f:function(){return this.x;}}; o.f();";
+    let (i, v) = run_both(src);
+    assert_eq!(i, "3");
+    assert_eq!(v, "3");
+}
+
+#[test]
+fn vm_parity_new_constructor() {
+    let src = "function C(x){this.x=x;} C.prototype.get=function(){return this.x;}; let c=new C(7); c.get();";
+    let (i, v) = run_both(src);
+    assert_eq!(i, "7");
+    assert_eq!(v, "7");
+}
