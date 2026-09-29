@@ -79,6 +79,11 @@ pub enum TokenKind {
     UnsignedRightShift,
     Arrow,
     Backtick,
+    TemplateStart,
+    TemplateText(String),
+    TemplateExprStart,
+    TemplateExprEnd,
+    TemplateEnd,
     RegExp(String, String),
     Eof,
 }

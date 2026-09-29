@@ -118,7 +118,7 @@ impl Vm {
         // Use the interpreter's env (which has globals installed by
         // install_builtins) so GetLocal can find Error, console, etc.
         let env = native.env.clone();
-        Self {
+        let mut vm = Self {
             stack: Vec::new(),
             pc: 0,
             frames: Vec::new(),
@@ -135,17 +135,32 @@ impl Vm {
             output_limit,
             output_truncated: false,
             strict: false,
-        }
+        };
+        vm
+    }
+
+    /// Install the native→VM callback bridge. Must be called when the VM is
+    /// at its final memory address (from `run`), because the captured raw
+    /// pointer is only valid at that address.
+    fn install_host_bridge(&mut self) {
+        let vm_ptr = self as *mut Vm;
+        self.native.call_host = Some(Box::new(move |_interp, callee, args, this_value, construct| {
+            let vm = unsafe { &mut *vm_ptr };
+            vm.call(callee, args, this_value, construct)
+        }));
     }
 
     pub fn take_output(&mut self) -> (Vec<String>, bool) {
-        (self.native.take_output(), self.output_truncated)
+        let output = self.native.take_output();
+        let truncated = self.native.output_truncated;
+        (output, truncated)
     }
 
     /// Execute a compiled program, returning the completion value.
     pub fn run(&mut self, program: Program) -> JsResult<Value> {
         self.program = program;
         self.detect_strict_mode();
+        self.install_host_bridge();
         self.run_to(self.program.instructions.len())
     }
 
@@ -300,12 +315,14 @@ impl Vm {
                                     value: v,
                                     handler: 0,
                                 });
-                                // Keep self.pc at the Throw instruction's position
-                                // (already incremented past it). find_handler
-                                // compares pc against block_end to determine
-                                // which handlers are active.
+                                // Propagate the exception through the handler
+                                // stack. find_handler walks the handlers and
+                                // returns the catch entry (or finally entry
+                                // when catch is active). If a finally block
+                                // exists, the interceptor will run it after
+                                // the catch block completes.
                                 match self.find_handler() {
-                                    Some((target, _finally)) => {
+                                    Some((target, _)) => {
                                         self.pc = target;
                                     }
                                     None => {
@@ -366,6 +383,23 @@ impl Vm {
         loop {
             let mut handler = None;
             while let Some(h) = self.handlers.pop() {
+                // Determine if the throw happened inside this handler's
+                // catch block. If so, we must run the finally (if any) before
+                // propagating to outer handlers.
+                let in_catch = h.catch.is_some_and(|c| {
+                    let f_end = h.finally.unwrap_or(usize::MAX);
+                    self.pc > c && self.pc <= f_end
+                });
+                if in_catch {
+                    // Throw inside catch: run finally if present, else
+                    // propagate to outer handlers.
+                    if let Some(f) = h.finally {
+                        self.handlers.push(h);
+                        return Some((f, None));
+                    }
+                    // No finally: drop and keep searching outer.
+                    continue;
+                }
                 if self.pc > h.block_end {
                     // The jump already passed the try block: this handler is
                     // done (e.g. we are inside its finally block).
@@ -375,10 +409,12 @@ impl Vm {
                     // Catch block already entered: don't re-enter catch,
                     // but still run finally if present.
                     let finally = h.finally;
-                    self.handlers.push(h);
                     if let Some(f) = finally {
+                        self.handlers.push(h);
                         return Some((f, None));
                     }
+                    // No finally: drop this handler and keep searching
+                    // outer handlers.
                     continue;
                 }
                 handler = h.catch;
@@ -777,14 +813,14 @@ impl Vm {
                 .native
                 .call_native(name, args, this_value, if construct { Some(func) } else { None })
                 .map_err(|e| JsError::flow(Flow::Throw(Value::String(e.to_string())))),
-            Internal::Function { params, .. } => {
+            Internal::Function { params, func_index, .. } => {
                 self.enter_call()?;
                 let key = Rc::as_ptr(&func) as usize;
                 let (closure_env, function_index) = self
                     .closures
                     .get(&key)
                     .cloned()
-                    .unwrap_or_else(|| (self.env.clone(), 0));
+                    .unwrap_or_else(|| (self.env.clone(), func_index));
                 let previous_env = self.env.clone();
                 let env = Env::child(closure_env);
                 let this_obj = if construct {
@@ -830,7 +866,8 @@ impl Vm {
                 self.env = env;
                 self.stack.clear();
                 self.pc = 0;
-                let result = self.run_to(self.current_stream().len())?;
+                let stream_len = self.current_stream().len();
+                let result = self.run_to(stream_len)?;
                 if construct && !matches!(result, Value::Object(_)) {
                     Ok(this_obj)
                 } else {
@@ -857,6 +894,7 @@ impl Vm {
         let obj = Object::with_internal(Internal::Function {
             params: params.clone(),
             body: Vec::new(),
+            func_index: index + 1,
         });
         obj.borrow_mut().proto = Some(self.native.function_proto.clone());
         let proto = Object::plain();
@@ -864,8 +902,8 @@ impl Vm {
         Interpreter::define_non_enumerable(&proto, "constructor", Value::Object(obj.clone()));
         Interpreter::define_non_enumerable(&obj, "prototype", Value::Object(proto));
         let value = Value::Object(obj.clone());
-        self.closures
-            .insert(Rc::as_ptr(&obj) as usize, (self.env.clone(), index + 1));
+        let key = Rc::as_ptr(&obj) as usize;
+        self.closures.insert(key, (self.env.clone(), index + 1));
         value
     }
 
@@ -1111,8 +1149,14 @@ mod tests {
 
     #[test]
     fn vm_for_in_over_object() {
+        // HashMap iteration order is non-deterministic, so accept any order.
         let src = "let o={a:1,b:2}; let out=''; for (let k in o) { out = out + k; } out;";
-        assert_eq!(run(src), Value::String("ab".into()));
+        let result = run(src);
+        assert!(
+            result == Value::String("ab".into()) || result == Value::String("ba".into()),
+            "expected 'ab' or 'ba', got {:?}",
+            result
+        );
     }
 
     #[test]

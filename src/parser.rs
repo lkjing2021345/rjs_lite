@@ -639,7 +639,13 @@ impl Parser {
         let token = self.advance().clone();
         match token.kind {
             TokenKind::Number(n) => Ok(Expr::Number(n)),
-            TokenKind::String(s) => Ok(Expr::String(s)),
+            TokenKind::String(s) => {
+                if s.contains("${") {
+                    self.parse_template_string(s)
+                } else {
+                    Ok(Expr::String(s))
+                }
+            }
             TokenKind::True => Ok(Expr::Bool(true)),
             TokenKind::False => Ok(Expr::Bool(false)),
             TokenKind::Null => Ok(Expr::Null),
@@ -706,6 +712,60 @@ impl Parser {
             params,
             body: self.block()?,
         })
+    }
+
+    fn parse_template_string(&mut self, s: String) -> JsResult<Expr> {
+        // The lexer emitted the whole template as a single String token with
+        // `${...}` as literal text. Split into text parts and expression
+        // parts, re-lexing each expression fragment.
+        let mut parts = Vec::new();
+        let mut rest = s;
+        while let Some(idx) = rest.find("${") {
+            if idx > 0 {
+                parts.push(Expr::String(rest[..idx].to_string()));
+            }
+            let after_dollar = &rest[idx + 2..];
+            let mut depth = 1;
+            let mut end = None;
+            for (i, ch) in after_dollar.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(end) = end else {
+                return Err(JsError::parse(
+                    "unterminated template expression",
+                    Span::new(0, 0, 0, 0),
+                ));
+            };
+            let expr_text = after_dollar[..end].to_string();
+            let expr_tokens = crate::lexer::lex(&expr_text)?;
+            let expr = crate::parser::parse(expr_tokens)?.statements;
+            // The expression should be a single expression statement.
+            let expr = match expr.first() {
+                Some(Stmt::Expr(e)) => (*e).clone(),
+                _ => {
+                    return Err(JsError::parse(
+                        "template expression must be a single expression",
+                        Span::new(0, 0, 0, 0),
+                    ))
+                }
+            };
+            parts.push(expr);
+            rest = after_dollar[end + 1..].to_string();
+        }
+        if !rest.is_empty() {
+            parts.push(Expr::String(rest));
+        }
+        Ok(Expr::TemplateLiteral { parts })
     }
 
     fn array_literal(&mut self) -> JsResult<Expr> {

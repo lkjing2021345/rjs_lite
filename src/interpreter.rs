@@ -92,6 +92,12 @@ pub struct Interpreter {
     pub(crate) output_limit: Option<usize>,
     pub(crate) output_truncated: bool,
     pub(crate) strict: bool,
+    /// Optional bridge: when the VM owns the interpreter, native methods
+    /// that call JS callbacks are routed through this hook so the VM can
+    /// execute VM-compiled functions.
+    pub(crate) call_host: Option<
+        Box<dyn FnMut(&mut Interpreter, Value, Vec<Value>, Value, bool) -> JsResult<Value>>,
+    >,
 }
 
 impl Interpreter {
@@ -156,6 +162,7 @@ impl Interpreter {
             output_limit,
             output_truncated: false,
             strict: false,
+            call_host: None,
         };
         this.install_builtins();
         this
@@ -1086,7 +1093,7 @@ impl Interpreter {
     }
 
     fn make_function(&mut self, params: Vec<String>, body: Vec<Stmt>) -> Value {
-        let obj = Object::with_internal(Internal::Function { params, body });
+        let obj = Object::with_internal(Internal::Function { params, body, func_index: 0 });
         obj.borrow_mut().proto = Some(self.function_proto.clone());
         let proto = Object::plain();
         proto.borrow_mut().proto = Some(self.object_proto.clone());
@@ -1146,6 +1153,7 @@ impl Interpreter {
                 let obj = Object::with_internal(Internal::Function {
                     params: params.clone(),
                     body: body.clone(),
+                    func_index: 0,
                 });
                 obj.borrow_mut().proto = Some(self.function_proto.clone());
                 let proto = Object::plain();
@@ -1588,6 +1596,14 @@ impl Interpreter {
         this_value: Value,
         construct: bool,
     ) -> JsResult<Value> {
+        // Bridge: when the VM owns this interpreter, route the call through
+        // the VM so VM-compiled functions can be invoked from native methods.
+        if self.call_host.is_some() {
+            let mut host = self.call_host.take().unwrap();
+            let result = host(self, callee, args, this_value, construct);
+            self.call_host = Some(host);
+            return result;
+        }
         let Value::Object(func) = callee else {
             return Err(JsError::type_error(format!(
                 "{} is not a function",
@@ -1602,7 +1618,7 @@ impl Interpreter {
                 this_value,
                 if construct { Some(func) } else { None },
             ),
-            Internal::Function { params, body } => {
+            Internal::Function { params, body, .. } => {
                 self.enter_call()?;
                 let previous = self.env.clone();
                 let closure_env = self

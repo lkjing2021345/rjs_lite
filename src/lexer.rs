@@ -308,16 +308,6 @@ impl Lexer {
                 }
                 continue;
             }
-            if ch == '$' {
-                self.advance();
-                if self.peek() == Some('{') {
-                    self.advance();
-                    buf.push_str("${");
-                    continue;
-                }
-                buf.push('$');
-                continue;
-            }
             self.advance();
             buf.push(ch);
         }

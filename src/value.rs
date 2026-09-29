@@ -32,6 +32,9 @@ pub enum Internal {
     Function {
         params: Vec<String>,
         body: Vec<Stmt>,
+        /// Bytecode function index (1-based, matches `program.functions` offset).
+        /// Set by the VM's `make_function`; 0 means "not yet compiled".
+        func_index: usize,
     },
     Native(&'static str),
     Bound {
@@ -87,7 +90,7 @@ impl Value {
     }
 
     pub fn function(params: Vec<String>, body: Vec<Stmt>) -> Value {
-        Value::Object(Object::with_internal(Internal::Function { params, body }))
+        Value::Object(Object::with_internal(Internal::Function { params, body, func_index: 0 }))
     }
 
     pub fn native(name: &'static str) -> Value {
