@@ -195,6 +195,8 @@ impl Interpreter {
         self.define_global("Infinity", Value::Number(f64::INFINITY), false);
         self.define_global("NaN", Value::Number(f64::NAN), false);
         self.define_global("undefined", Value::Undefined, false);
+        // `globalThis` — the global object itself.
+        self.define_global("globalThis", Value::Object(self.global.clone()), false);
 
         let json = Object::plain();
         json.borrow_mut().proto = Some(self.object_proto.clone());
