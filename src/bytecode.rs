@@ -55,6 +55,8 @@ pub enum Instruction {
     SetMember(String),
     GetIndex,
     SetIndex,
+    DeleteMember(String),
+    DeleteIndex,
 
     // --- Stack manipulation ---
     Dup,

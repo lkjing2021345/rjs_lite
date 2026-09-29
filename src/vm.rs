@@ -64,6 +64,8 @@ struct Handler {
     catch: Option<usize>,
     /// Entry of the finally block.
     finally: Option<usize>,
+    /// True once the catch block has been entered (prevents re-entry).
+    catch_active: bool,
 }
 
 pub struct Vm {
@@ -261,6 +263,32 @@ impl Vm {
                         match flow {
                             Flow::Return(v) => {
                                 let v = v.clone();
+                                // Check if there's an active finally block that
+                                // should run before the return completes.
+                                let finally_entry = self
+                                    .handlers
+                                    .iter()
+                                    .rev()
+                                    .find(|h| self.pc <= h.block_end || h.catch_active)
+                                    .and_then(|h| h.finally);
+                                if let Some(finally_pc) = finally_entry {
+                                    // Run the finally block. If it returns,
+                                    // that return replaces the original.
+                                    self.handlers.pop();
+                                    match self.run_finally(finally_pc) {
+                                        Ok(()) => return Ok(v),
+                                        Err(e) => {
+                                            if let Some(Flow::Return(fv)) = e.as_flow() {
+                                                let fv = fv.clone();
+                                                if self.frames.is_empty() {
+                                                    return Ok(fv);
+                                                }
+                                                return Ok(self.finish_frame(fv));
+                                            }
+                                            return Err(e);
+                                        }
+                                    }
+                                }
                                 if self.frames.is_empty() {
                                     return Ok(v);
                                 }
@@ -277,8 +305,8 @@ impl Vm {
                                 // compares pc against block_end to determine
                                 // which handlers are active.
                                 match self.find_handler() {
-                                    Some(catch) => {
-                                        self.pc = catch;
+                                    Some((target, _finally)) => {
+                                        self.pc = target;
                                     }
                                     None => {
                                         return Err(JsError::runtime(
@@ -300,6 +328,13 @@ impl Vm {
             // CatchParam instruction.
             if self.pc > 0 {
                 if let Some((param, after, value)) = self.catch_entry_at(self.pc - 1) {
+                    // Mark the handler as catch-active so throws inside
+                    // the catch block don't re-enter the same catch.
+                    if let Some(h) = self.handlers.last_mut() {
+                        if h.catch == Some(self.pc - 1) {
+                            h.catch_active = true;
+                        }
+                    }
                     let env = Env::child(self.env.clone());
                     self.env = env.clone();
                     if let Some(param) = param {
@@ -326,7 +361,8 @@ impl Vm {
     /// Walk the handler stack (and frame stack) to find the innermost
     /// handler that can catch the pending exception. Returns the catch
     /// entry, or `None` when the exception escapes the whole program.
-    fn find_handler(&mut self) -> Option<usize> {
+    /// Also returns the finally entry if the handler has one.
+    fn find_handler(&mut self) -> Option<(usize, Option<usize>)> {
         loop {
             let mut handler = None;
             while let Some(h) = self.handlers.pop() {
@@ -335,12 +371,27 @@ impl Vm {
                     // done (e.g. we are inside its finally block).
                     continue;
                 }
+                if h.catch_active {
+                    // Catch block already entered: don't re-enter catch,
+                    // but still run finally if present.
+                    let finally = h.finally;
+                    self.handlers.push(h);
+                    if let Some(f) = finally {
+                        return Some((f, None));
+                    }
+                    continue;
+                }
                 handler = h.catch;
                 self.handlers.push(h);
                 break;
             }
             if let Some(catch) = handler {
-                return Some(catch);
+                // Find the finally entry for this handler.
+                let finally = self
+                    .handlers
+                    .last()
+                    .and_then(|h| h.finally);
+                return Some((catch, finally));
             }
             if self.frames.is_empty() {
                 return None;
@@ -434,6 +485,30 @@ impl Vm {
                     }
                     _ => {}
                 }
+            }
+            Instruction::DeleteMember(property) => {
+                let object = self.pop();
+                let deleted = match object {
+                    Value::Object(o) => {
+                        o.borrow_mut().props.remove(&property).is_some()
+                    }
+                    _ => false,
+                };
+                self.push(Value::Bool(deleted));
+            }
+            Instruction::DeleteIndex => {
+                let index = self.pop();
+                let object = self.pop();
+                let deleted = match object {
+                    Value::Object(o) => {
+                        o.borrow_mut()
+                            .props
+                            .remove(&index.to_string())
+                            .is_some()
+                    }
+                    _ => false,
+                };
+                self.push(Value::Bool(deleted));
             }
 
             // --- Stack manipulation ---
@@ -585,6 +660,7 @@ impl Vm {
                     block_end,
                     catch,
                     finally,
+                    catch_active: false,
                 });
             }
             Instruction::CatchParam(_) => {
@@ -861,7 +937,24 @@ impl Vm {
     fn run_finally(&mut self, entry: usize) -> JsResult<()> {
         let end = self.current_stream().len();
         self.pc = entry;
-        self.run_to(end)?;
+        // Run the finally block. If the finally block throws, the throw
+        // propagates (replaces any pending exception). We don't catch it
+        // here — the caller's run_to will handle it.
+        while self.pc < end {
+            self.step()?;
+            let instr = self.current_stream()[self.pc].clone();
+            self.pc += 1;
+            match self.execute(instr) {
+                Ok(()) => {}
+                Err(e) => {
+                    // Propagate Flow::Throw and Flow::Return to the caller.
+                    if e.as_flow().is_some() {
+                        return Err(e);
+                    }
+                    return Err(e);
+                }
+            }
+        }
         Ok(())
     }
 }

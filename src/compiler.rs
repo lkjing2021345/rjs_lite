@@ -414,8 +414,28 @@ impl<'a> Compiler<'a> {
                 self.emit(Instruction::PushRegExp(pattern.clone(), flags.clone()));
             }
             Expr::Unary { op, expr } => {
-                self.emit_expr(expr);
-                self.emit(Instruction::Unary(*op));
+                if *op == UnaryOp::Delete {
+                    // delete o.a: emit object, then DeleteMember.
+                    // delete o[i]: emit object, index, then DeleteIndex.
+                    match expr.as_ref() {
+                        Expr::Member { object, property } => {
+                            self.emit_expr(object);
+                            self.emit(Instruction::DeleteMember(property.clone()));
+                        }
+                        Expr::Index { object, index } => {
+                            self.emit_expr(object);
+                            self.emit_expr(index);
+                            self.emit(Instruction::DeleteIndex);
+                        }
+                        _ => {
+                            // delete on a non-member expression: no-op, push true.
+                            self.emit(Instruction::PushBool(true));
+                        }
+                    }
+                } else {
+                    self.emit_expr(expr);
+                    self.emit(Instruction::Unary(*op));
+                }
             }
             Expr::Typeof(expr) => {
                 self.emit_expr(expr);
