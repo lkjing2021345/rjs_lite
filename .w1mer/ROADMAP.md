@@ -50,7 +50,7 @@
 | # | Task | Doc | Status | Effect |
 |---|------|-----|--------|--------|
 | 09 | Baseline test262 pass rate + initial fixes | 09.md | done | language 26.3%→29.35% (2000 sample); added arguments object, eval(), destructuring, strict mode guards, trailing semicolon fix; 2026-09-29 |
-| 10 | Improve test262 pass rate (parse errors, runtime errors) | 10.md | doing | 29.6% (2000 sample); added async function + await, BigInt literals, strict-mode arguments.callee TypeError, strict-mode fn-decl-in-statement-position SyntaxError; 931 parse + 375 runtime + 100 negative-phase-mismatch remaining; 2026-09-29 eba4e04 |
+| 10 | Improve test262 pass rate (parse errors, runtime errors) | 10.md | doing | 30.75% (2000 sample); added async function + await, BigInt literals, strict-mode arguments.callee TypeError, strict-mode fn-decl-in-statement-position SyntaxError, named function expressions, ASI edge cases (if-else/throw/postfix/expression same-line); 946 parse + 354 runtime + 83 negative-phase-mismatch remaining; 2026-09-29 0663fd5 |
 <!-- w1mer:task:test262 -->
 
 (Items awaiting re-prioritization)
