@@ -1252,12 +1252,14 @@ impl Interpreter {
                 .get(name)
                 .ok_or_else(|| JsError::reference_error(format!("{name} is not defined"))),
             Expr::Array(items) => {
-                let values = items
+                let values: Vec<Option<Value>> = items
                     .iter()
-                    .map(|e| self.eval_expr(e))
+                    .map(|e| match e {
+                        None => Ok(None),
+                        Some(expr) => self.eval_expr(expr).map(Some),
+                    })
                     .collect::<JsResult<Vec<_>>>()?;
-                let obj =
-                    Object::with_internal(Internal::Array(values.into_iter().map(Some).collect()));
+                let obj = Object::with_internal(Internal::Array(values));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))
             }
@@ -1265,8 +1267,27 @@ impl Interpreter {
                 let obj = Object::plain();
                 obj.borrow_mut().proto = Some(self.object_proto.clone());
                 for (k, e) in props {
-                    let v = self.eval_expr(e)?;
-                    obj.borrow_mut().props.insert(k.clone(), v);
+                    match k {
+                        // Spread: `...expr` — copy own enumerable properties.
+                        None => {
+                            let v = self.eval_expr(e)?;
+                            if let Value::Object(src) = &v {
+                                for (pk, pv) in src.borrow().props.clone() {
+                                    obj.borrow_mut().props.insert(pk, pv);
+                                }
+                            }
+                        }
+                        // Computed key: `computed:<expr>` — evaluate the key.
+                        Some(key) if key.starts_with("computed:") => {
+                            let v = self.eval_expr(e)?;
+                            obj.borrow_mut().props.insert(key.clone(), v);
+                        }
+                        // Normal key.
+                        Some(key) => {
+                            let v = self.eval_expr(e)?;
+                            obj.borrow_mut().props.insert(key.clone(), v);
+                        }
+                    }
                 }
                 Ok(Value::Object(obj))
             }

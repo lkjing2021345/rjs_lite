@@ -90,8 +90,8 @@ pub enum Expr {
     Undefined,
     This,
     Identifier(String),
-    Array(Vec<Expr>),
-    Object(Vec<(String, Expr)>),
+    Array(Vec<Option<Expr>>),
+    Object(Vec<(Option<String>, Expr)>),
     Function {
         name: Option<String>,
         params: Vec<Pattern>,

@@ -398,15 +398,28 @@ impl<'a> Compiler<'a> {
             Expr::Identifier(name) => { self.emit(Instruction::GetLocal(name.clone())); }
             Expr::Array(items) => {
                 for item in items {
-                    self.emit_expr(item);
+                    match item {
+                        None => self.emit_expr(&Expr::Undefined),
+                        Some(expr) => self.emit_expr(expr),
+                    }
                 }
                 self.emit(Instruction::PushArray(items.len()));
             }
             Expr::Object(props) => {
                 self.emit(Instruction::PushObject);
                 for (key, value) in props {
-                    self.emit_expr(value);
-                    self.emit(Instruction::SetObjectProperty(key.clone()));
+                    match key {
+                        // Spread: compile the value and push it; the VM
+                        // handles spreading an object into the target.
+                        None => {
+                            self.emit_expr(value);
+                            self.emit(Instruction::SetObjectProperty(String::new()));
+                        }
+                        Some(key) => {
+                            self.emit_expr(value);
+                            self.emit(Instruction::SetObjectProperty(key.clone()));
+                        }
+                    }
                 }
             }
             Expr::Function { name: _, params, body } => {

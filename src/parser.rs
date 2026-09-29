@@ -1039,12 +1039,17 @@ impl Parser {
     }
 
     fn array_literal(&mut self) -> JsResult<Expr> {
-        let mut items = Vec::new();
+        let mut items: Vec<Option<Expr>> = Vec::new();
         if self.eat(&TokenKind::RightBracket) {
             return Ok(Expr::Array(items));
         }
         loop {
-            items.push(self.expression()?);
+            // Elision: `,` or `]` after a comma (or at start) means a hole.
+            if self.at(&TokenKind::Comma) || self.at(&TokenKind::RightBracket) {
+                items.push(None);
+            } else {
+                items.push(Some(self.expression()?));
+            }
             if self.eat(&TokenKind::RightBracket) {
                 break;
             }
@@ -1057,22 +1062,49 @@ impl Parser {
     }
 
     fn object_literal(&mut self) -> JsResult<Expr> {
-        let mut props = Vec::new();
+        let mut props: Vec<(Option<String>, Expr)> = Vec::new();
         if self.eat(&TokenKind::RightBrace) {
             return Ok(Expr::Object(props));
         }
         loop {
-            let key = match self.advance().clone().kind {
-                TokenKind::Identifier(s) | TokenKind::String(s) => s,
-                TokenKind::Number(n) => n.to_string(),
-                _ => return Err(self.error("expected object property name")),
-            };
-            if self.eat(&TokenKind::Colon) {
+            // Spread: `...expr`
+            if self.eat(&TokenKind::DotDotDot) {
                 let value = self.expression()?;
-                props.push((key, value));
+                props.push((None, value));
+                if self.eat(&TokenKind::RightBrace) {
+                    break;
+                }
+                self.expect(&TokenKind::Comma)?;
+                if self.eat(&TokenKind::RightBrace) {
+                    break;
+                }
+                continue;
+            }
+            // Computed property: `[expr]: value`
+            if self.at(&TokenKind::LeftBracket) {
+                self.advance(); // consume `[`
+                let key_expr = self.expression()?;
+                self.expect(&TokenKind::RightBracket)?;
+                self.expect(&TokenKind::Colon)?;
+                let value = self.expression()?;
+                // Store the computed key as a special marker; we use the
+                // stringified form of the key expression for now.
+                let key = format!("computed:{}", Self::key_expr_to_string(&key_expr));
+                props.push((Some(key), value));
             } else {
-                let value = Expr::Identifier(key.clone());
-                props.push((key, value));
+                let key = match self.advance().clone().kind {
+                    TokenKind::Identifier(s) | TokenKind::String(s) => Some(s),
+                    TokenKind::Number(n) => Some(n.to_string()),
+                    _ => return Err(self.error("expected object property name")),
+                };
+                if self.eat(&TokenKind::Colon) {
+                    let value = self.expression()?;
+                    props.push((key, value));
+                } else {
+                    let k = key.clone().unwrap_or_default();
+                    let value = Expr::Identifier(k);
+                    props.push((key, value));
+                }
             }
             if self.eat(&TokenKind::RightBrace) {
                 break;
@@ -1090,6 +1122,18 @@ impl Parser {
             expr,
             Expr::Identifier(_) | Expr::Member { .. } | Expr::Index { .. }
         )
+    }
+
+    /// Short string form of a computed-key expression, used as a property
+    /// name placeholder. Only handles the common cases.
+    fn key_expr_to_string(expr: &Expr) -> String {
+        match expr {
+            Expr::Identifier(s) => s.clone(),
+            Expr::String(s) => s.clone(),
+            Expr::Number(n) => n.to_string(),
+            Expr::BigInt(s) => s.clone(),
+            other => format!("{:?}", other),
+        }
     }
 
     fn identifier(&mut self) -> JsResult<String> {
