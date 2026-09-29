@@ -1787,7 +1787,7 @@ impl Interpreter {
                 if !construct {
                     let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
                     let args_obj = Object::with_internal(Internal::Array(slots));
-                    args_obj.borrow_mut().proto = Some(self.array_proto.clone());
+                    args_obj.borrow_mut().proto = Some(self.object_proto.clone());
                     if !self.strict {
                         Interpreter::define_non_enumerable(
                             &args_obj,

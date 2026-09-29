@@ -861,7 +861,7 @@ impl Vm {
                 if !construct {
                     let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
                     let args_obj = Object::with_internal(Internal::Array(slots));
-                    args_obj.borrow_mut().proto = Some(self.native.array_proto.clone());
+                    args_obj.borrow_mut().proto = Some(self.native.object_proto.clone());
                     if !self.strict {
                         Interpreter::define_non_enumerable(
                             &args_obj,
