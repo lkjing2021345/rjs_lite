@@ -1236,6 +1236,7 @@ impl Interpreter {
         self.step()?;
         match expr {
             Expr::Number(n) => Ok(Value::Number(*n)),
+            Expr::BigInt(s) => Ok(Value::BigInt(s.clone())),
             Expr::String(s) => Ok(Value::String(s.clone())),
             Expr::Bool(v) => Ok(Value::Bool(*v)),
             Expr::Null => Ok(Value::Null),
@@ -3770,6 +3771,7 @@ impl Interpreter {
                     Ok(format!("\"{}\"", escaped))
                 }
                 Value::Undefined => Ok("undefined".into()),
+                Value::BigInt(s) => Ok(format!("\"{}\"", s)),
                 Value::Object(o) => {
                     let obj = o.borrow();
                     match &obj.internal {

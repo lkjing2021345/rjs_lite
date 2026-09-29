@@ -1,14 +1,18 @@
 use crate::ast::{Pattern, Stmt};
+use num_bigint::BigInt;
+use num_traits::{Num, ToPrimitive, Zero};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
+use std::str::FromStr;
 
 pub type ObjectRef = Rc<RefCell<Object>>;
 
 #[derive(Clone)]
 pub enum Value {
     Number(f64),
+    BigInt(String),
     String(String),
     Bool(bool),
     Null,
@@ -112,6 +116,7 @@ impl Value {
             Value::Bool(v) => *v,
             Value::Null | Value::Undefined => false,
             Value::Number(n) => *n != 0.0 && !n.is_nan(),
+            Value::BigInt(s) => BigInt::from_str(s).map(|b| b != BigInt::zero()).unwrap_or(false),
             Value::String(s) => !s.is_empty(),
             Value::Object(_) => true,
         }
@@ -120,6 +125,7 @@ impl Value {
     pub fn type_name(&self) -> &'static str {
         match self {
             Value::Number(_) => "number",
+            Value::BigInt(_) => "bigint",
             Value::String(_) => "string",
             Value::Bool(_) => "boolean",
             Value::Null => "object",
@@ -138,6 +144,10 @@ impl Value {
             Value::Bool(false) => 0.0,
             Value::Null => 0.0,
             Value::Undefined => f64::NAN,
+            Value::BigInt(s) => BigInt::from_str(s)
+                .ok()
+                .and_then(|b| b.to_f64())
+                .unwrap_or(f64::NAN),
             Value::String(s) => {
                 let t = s.trim();
                 if t.is_empty() {
@@ -237,6 +247,7 @@ impl fmt::Display for Value {
                 write!(f, "{}", if *n > 0.0 { "Infinity" } else { "-Infinity" })
             }
             Value::Number(n) => write!(f, "{n}"),
+            Value::BigInt(s) => write!(f, "{s}n"),
             Value::String(s) => write!(f, "{s}"),
             Value::Bool(v) => write!(f, "{v}"),
             Value::Null => write!(f, "null"),

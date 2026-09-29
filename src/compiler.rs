@@ -389,6 +389,7 @@ impl<'a> Compiler<'a> {
     fn emit_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Number(n) => { self.emit(Instruction::PushNumber(*n)); }
+            Expr::BigInt(s) => { self.emit(Instruction::PushBigInt(s.clone())); }
             Expr::String(s) => { self.emit(Instruction::PushString(s.clone())); }
             Expr::Bool(b) => { self.emit(Instruction::PushBool(*b)); }
             Expr::Null => { self.emit(Instruction::PushNull); }

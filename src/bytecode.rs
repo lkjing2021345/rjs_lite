@@ -20,6 +20,7 @@ use crate::ast::{BinaryOp, Pattern, UnaryOp};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constant {
     Number(f64),
+    BigInt(String),
     String(String),
     Bool(bool),
     Null,
@@ -39,6 +40,7 @@ pub enum Constant {
 pub enum Instruction {
     // --- Literals (constants) ---
     PushNumber(f64),
+    PushBigInt(String),
     PushString(String),
     PushBool(bool),
     PushNull,

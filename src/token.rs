@@ -3,6 +3,7 @@ use crate::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Number(f64),
+    BigInt(String),
     String(String),
     Identifier(String),
     Let,

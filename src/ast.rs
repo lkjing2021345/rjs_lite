@@ -83,6 +83,7 @@ pub enum Stmt {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
+    BigInt(String),
     String(String),
     Bool(bool),
     Null,

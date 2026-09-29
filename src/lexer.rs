@@ -421,6 +421,14 @@ impl Lexer {
                 self.advance();
             }
         }
+        // BigInt literal: digits followed by `n` (e.g. `1n`, `0x1Fn`).
+        // A `.` was not consumed, so a float can never be a BigInt.
+        if self.peek() == Some('n') {
+            self.advance();
+            self.tokens
+                .push(Token::new(TokenKind::BigInt(text), self.span(s, l, c)));
+            return Ok(());
+        }
         let n = text
             .parse()
             .map_err(|_| JsError::lex("invalid number", self.span(s, l, c)))?;

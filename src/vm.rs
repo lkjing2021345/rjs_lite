@@ -458,6 +458,7 @@ impl Vm {
         match instr {
             // --- Literals ---
             Instruction::PushNumber(n) => self.push(Value::Number(n)),
+            Instruction::PushBigInt(s) => self.push(Value::BigInt(s)),
             Instruction::PushString(s) => self.push(Value::String(s)),
             Instruction::PushBool(b) => self.push(Value::Bool(b)),
             Instruction::PushNull => self.push(Value::Null),

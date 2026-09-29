@@ -776,6 +776,7 @@ impl Parser {
         let token = self.advance().clone();
         match token.kind {
             TokenKind::Number(n) => Ok(Expr::Number(n)),
+            TokenKind::BigInt(s) => Ok(Expr::BigInt(s)),
             TokenKind::String(s) => {
                 if s.contains("${") {
                     self.parse_template_string(s)
