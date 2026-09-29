@@ -1700,6 +1700,14 @@ impl Interpreter {
                 self.assign_target(target, value.clone())?;
                 Ok(value)
             }
+            Expr::DestructuringAssign { pattern, value } => {
+                // Evaluate the right-hand side, then bind each pattern leaf.
+                // The assignment expression itself evaluates to the RHS so it
+                // chains like `result = [a, b] = [1, 2]`.
+                let rhs = self.eval_expr(value)?;
+                self.bind_pattern(pattern, rhs.clone(), true)?;
+                Ok(rhs)
+            }
             Expr::CompoundAssign { target, op, value } => {
                 let left = self.get_target(target)?;
                 let right = self.eval_expr(value)?;

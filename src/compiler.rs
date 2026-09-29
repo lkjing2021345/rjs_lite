@@ -652,6 +652,13 @@ impl<'a> Compiler<'a> {
                 self.emit(Instruction::Dup);
                 self.emit_target(target);
             }
+            Expr::DestructuringAssign { pattern, value } => {
+                self.emit_expr(value);
+                // Dup so the RHS remains the expression result after the
+                // pattern binding pops its copy (chained assignment support).
+                self.emit(Instruction::Dup);
+                self.emit(Instruction::DestructureDefine((**pattern).clone(), true));
+            }
             Expr::CompoundAssign { target, op, value } => {
                 self.emit_target_ref(target);
                 self.emit_expr(value);

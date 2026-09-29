@@ -754,6 +754,23 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> JsResult<Expr> {
+        // Destructuring assignment: `[a, b] = rhs` or `{ a, b } = rhs`.
+        // Try to read the LHS as a binding pattern and only commit when a
+        // plain `=` (never `=>`) follows. Otherwise rewind and let the normal
+        // expression path handle it as an array/object literal.
+        if self.at(&TokenKind::LeftBracket) || self.at(&TokenKind::LeftBrace) {
+            let saved = self.pos;
+            if let Ok(pattern) = self.pattern() {
+                if self.eat(&TokenKind::Assign) {
+                    let value = self.assignment()?;
+                    return Ok(Expr::DestructuringAssign {
+                        pattern: Box::new(pattern),
+                        value: Box::new(value),
+                    });
+                }
+            }
+            self.pos = saved;
+        }
         let expr = self.conditional()?;
         if self.eat(&TokenKind::Arrow) {
             let params = match expr {
@@ -766,6 +783,15 @@ impl Parser {
             if Self::is_assignable(&expr) {
                 return Ok(Expr::Assign {
                     target: Box::new(expr),
+                    value: Box::new(self.assignment()?),
+                });
+            }
+            // A literal-shaped LHS (`[1, 2] = ...`, `({a: b} = ...)`) is not a
+            // valid assignment target, but it can still be reinterpreted as a
+            // destructuring pattern. Non-bindable elements become holes.
+            if let Some(pattern) = Self::expr_to_assign_pattern(&expr) {
+                return Ok(Expr::DestructuringAssign {
+                    pattern: Box::new(pattern),
                     value: Box::new(self.assignment()?),
                 });
             }
@@ -1399,6 +1425,59 @@ impl Parser {
             expr,
             Expr::Identifier(_) | Expr::Member { .. } | Expr::Index { .. }
         )
+    }
+
+    /// Reinterpret an already-parsed array/object literal as a destructuring
+    /// assignment pattern. Returns `None` when the expression cannot be a
+    /// destructuring target at all (e.g. a call expression). Elements that are
+    /// not valid binding targets (numbers, calls, ...) are treated as holes so
+    /// permissive forms such as `[1, 2] = [3, 4]` still parse.
+    fn expr_to_assign_pattern(expr: &Expr) -> Option<Pattern> {
+        match expr {
+            Expr::Identifier(name) => Some(Pattern::Identifier(name.clone())),
+            // `a = default` inside a pattern.
+            Expr::Assign { target, value } => {
+                let inner = Self::expr_to_assign_pattern(target)?;
+                Some(Pattern::Default(Box::new(inner), (**value).clone()))
+            }
+            Expr::Array(items) => {
+                let mut patterns = Vec::with_capacity(items.len());
+                for item in items {
+                    let pattern = match item {
+                        None => Pattern::Identifier(String::new()),
+                        Some(e) => Self::expr_to_assign_pattern(e)
+                            .unwrap_or_else(|| Pattern::Identifier(String::new())),
+                    };
+                    patterns.push(pattern);
+                }
+                Some(Pattern::ArrayPattern(patterns))
+            }
+            Expr::Object(props) => {
+                let mut entries = Vec::with_capacity(props.len());
+                for (key, value) in props {
+                    match key {
+                        // Spread element `...rest`.
+                        None => {
+                            let inner = Self::expr_to_assign_pattern(value)?;
+                            entries.push(ObjectPatternEntry {
+                                key: "...".to_string(),
+                                value: Pattern::Rest(Box::new(inner)),
+                            });
+                        }
+                        Some(k) => {
+                            let pattern = Self::expr_to_assign_pattern(value)
+                                .unwrap_or_else(|| Pattern::Identifier(String::new()));
+                            entries.push(ObjectPatternEntry {
+                                key: k.clone(),
+                                value: pattern,
+                            });
+                        }
+                    }
+                }
+                Some(Pattern::ObjectPattern(entries))
+            }
+            _ => None,
+        }
     }
 
     /// Short string form of a computed-key expression, used as a property

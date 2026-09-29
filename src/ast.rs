@@ -148,6 +148,13 @@ pub enum Expr {
         target: Box<Expr>,
         value: Box<Expr>,
     },
+    /// A destructuring assignment such as `[a, b] = rhs` or `{ x, y } = rhs`.
+    /// Evaluates to the right-hand side value so it chains like a normal
+    /// assignment (`result = [a, b] = [1, 2]`).
+    DestructuringAssign {
+        pattern: Box<Pattern>,
+        value: Box<Expr>,
+    },
     CompoundAssign {
         target: Box<Expr>,
         op: BinaryOp,

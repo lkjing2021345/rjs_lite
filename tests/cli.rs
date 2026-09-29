@@ -1147,3 +1147,60 @@ fn vm_parity_class_constructor_and_method() {
     assert_eq!(i, "6");
     assert_eq!(v, "6");
 }
+
+// --- Destructuring assignment ---
+
+#[test]
+fn array_destructuring_assignment_binds_in_order() {
+    let src = "var a, b; [a, b] = [1, 2]; print(a + ',' + b);";
+    assert_eq!(run_cli(&["-e", src]), "1,2");
+}
+
+#[test]
+fn object_destructuring_assignment_binds_properties() {
+    let src = "var x, y; ({ x, y } = { x: 10, y: 20 }); print(x + ',' + y);";
+    assert_eq!(run_cli(&["-e", src]), "10,20");
+}
+
+#[test]
+fn destructuring_assignment_defaults() {
+    // Defaults apply only when the extracted value is absent.
+    let present = "var a, b; [a = 99, b = 88] = [1, 2]; print(a + ',' + b);";
+    assert_eq!(run_cli(&["-e", present]), "1,2");
+    let missing = "var a, b; [a = 99, b = 88] = [1]; print(a + ',' + b);";
+    assert_eq!(run_cli(&["-e", missing]), "1,88");
+}
+
+#[test]
+fn chained_destructuring_assignment_evaluates_to_rhs() {
+    let src = "var a, b, result; result = [a, b] = [3, 4]; \
+               print(result[0] + ',' + result[1] + ',' + a + ',' + b);";
+    assert_eq!(run_cli(&["-e", src]), "3,4,3,4");
+}
+
+#[test]
+fn destructuring_assignment_rest_and_rename() {
+    let rest = "var a, b; [a, ...b] = [1, 2, 3]; print(a + ',' + b.join(','));";
+    assert_eq!(run_cli(&["-e", rest]), "1,2,3");
+    let rename = "var obj; ({ p: obj } = { p: 42 }); print(obj);";
+    assert_eq!(run_cli(&["-e", rename]), "42");
+}
+
+#[test]
+fn vm_parity_destructuring_assignment() {
+    let array = "var a, b; [a, b] = [1, 2]; a + b;";
+    let (i, v) = run_both(array);
+    assert_eq!(i, "3");
+    assert_eq!(v, "3");
+
+    let object = "var x, y; ({ x, y } = { x: 4, y: 5 }); x * y;";
+    let (i, v) = run_both(object);
+    assert_eq!(i, "20");
+    assert_eq!(v, "20");
+
+    let chained = "var a, b, r; r = [a, b] = [7, 8]; [r[0], r[1], a, b].join(',');";
+    let (i, v) = run_both(chained);
+    assert_eq!(i, "7,8,7,8");
+    assert_eq!(v, "7,8,7,8");
+}
+
