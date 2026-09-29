@@ -93,10 +93,13 @@ impl Parser {
         self.expect(&TokenKind::LeftParen)?;
         let params = self.params()?;
         self.expect(&TokenKind::LeftBrace)?;
+        let body = self.block()?;
+        // Allow an optional trailing semicolon after the function body.
+        self.optional_semicolon();
         Ok(Stmt::FunctionDecl {
             name,
             params,
-            body: self.block()?,
+            body,
         })
     }
 
