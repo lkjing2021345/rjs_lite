@@ -190,6 +190,8 @@ pub enum Expr {
     /// The `super` keyword. Used as a call callee (`super(...)`) or as the
     /// object of a member call (`super.method(...)`).
     Super,
+    /// `...expr` in a call argument list or array literal.
+    Spread(Box<Expr>),
 }
 
 /// One member of a class body.

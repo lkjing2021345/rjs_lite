@@ -108,6 +108,9 @@ pub enum Instruction {
     // --- Calls ---
     Call(usize),
     New(usize),
+    /// Marks the top of the stack as a spread argument; the VM's `Call`/`New`
+    /// handler flattens it before invoking.
+    Spread,
 
     // --- Object / array construction ---
     PushArray(usize),

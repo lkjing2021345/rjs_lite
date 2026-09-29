@@ -596,6 +596,9 @@ impl Vm {
             // --- Calls ---
             Instruction::Call(arg_count) => self.call_value(false, arg_count)?,
             Instruction::New(arg_count) => self.call_value(true, arg_count)?,
+            // Spread marker: the source value is already on the stack; the
+            // `Call`/`New` count includes it as a single arg. No-op.
+            Instruction::Spread => {}
 
             // --- Object / array construction ---
             Instruction::PushArray(count) => {

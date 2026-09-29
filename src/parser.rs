@@ -1125,7 +1125,12 @@ impl Parser {
             if self.at(&TokenKind::RightParen) {
                 break;
             }
-            args.push(self.expression()?);
+            // Spread: `f(...args)`
+            if self.eat(&TokenKind::DotDotDot) {
+                args.push(Expr::Spread(Box::new(self.expression()?)));
+            } else {
+                args.push(self.expression()?);
+            }
             if self.eat(&TokenKind::RightParen) {
                 break;
             }

@@ -496,6 +496,21 @@ impl<'a> Compiler<'a> {
         }));
     }
 
+    /// Emit a call argument list, returning the total arg count. Spread args
+    /// are emitted with a `Spread` marker; the VM treats each as a single arg
+    /// (no flattening), so the count is the total number of args.
+    fn emit_call_args(&mut self, args: &[Expr]) -> usize {
+        for arg in args {
+            if let Expr::Spread(inner) = arg {
+                self.emit_expr(inner);
+                self.emit(Instruction::Spread);
+            } else {
+                self.emit_expr(arg);
+            }
+        }
+        args.len()
+    }
+
     fn emit_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Number(n) => { self.emit(Instruction::PushNumber(*n)); }
@@ -687,18 +702,14 @@ impl<'a> Compiler<'a> {
             }
             Expr::Call { callee, args } => {
                 self.emit_callee(callee);
-                for arg in args {
-                    self.emit_expr(arg);
-                }
-                self.emit(Instruction::Call(args.len()));
+                let count = self.emit_call_args(args);
+                self.emit(Instruction::Call(count));
             }
             Expr::New { callee, args } => {
                 self.emit(Instruction::PushUndefined);
                 self.emit_expr(callee);
-                for arg in args {
-                    self.emit_expr(arg);
-                }
-                self.emit(Instruction::New(args.len()));
+                let count = self.emit_call_args(args);
+                self.emit(Instruction::New(count));
             }
             Expr::Member { object, property } => {
                 self.emit_expr(object);
@@ -714,6 +725,10 @@ impl<'a> Compiler<'a> {
             }
             Expr::Super => {
                 self.emit(Instruction::GetLocal("__super__".into()));
+            }
+            Expr::Spread(inner) => {
+                self.emit_expr(inner);
+                self.emit(Instruction::Spread);
             }
         }
     }

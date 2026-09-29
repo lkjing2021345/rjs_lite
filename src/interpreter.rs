@@ -1584,6 +1584,31 @@ impl Interpreter {
         Value::Object(result)
     }
 
+    /// Evaluate a call argument list, flattening `...spread` arguments.
+    fn eval_call_args(&mut self, args: &[Expr]) -> JsResult<Vec<Value>> {
+        let mut out = Vec::new();
+        for arg in args {
+            match arg {
+                Expr::Spread(inner) => {
+                    let v = self.eval_expr(inner)?;
+                    if let Value::Object(o) = &v {
+                        if let Internal::Array(items) = &o.borrow().internal {
+                            for item in items {
+                                out.push(item.clone().unwrap_or(Value::Undefined));
+                            }
+                        } else {
+                            out.push(v.clone());
+                        }
+                    } else {
+                        out.push(v);
+                    }
+                }
+                other => out.push(self.eval_expr(other)?),
+            }
+        }
+        Ok(out)
+    }
+
     fn eval_expr(&mut self, expr: &Expr) -> JsResult<Value> {
         self.step()?;
         match expr {
@@ -1851,18 +1876,12 @@ impl Interpreter {
             }
             Expr::Call { callee, args } => {
                 let (callee_value, this_value) = self.eval_callee(callee)?;
-                let args = args
-                    .iter()
-                    .map(|a| self.eval_expr(a))
-                    .collect::<JsResult<Vec<_>>>()?;
+                let args = self.eval_call_args(args)?;
                 self.call(callee_value, args, this_value, false)
             }
             Expr::New { callee, args } => {
                 let callee = self.eval_expr(callee)?;
-                let args = args
-                    .iter()
-                    .map(|a| self.eval_expr(a))
-                    .collect::<JsResult<Vec<_>>>()?;
+                let args = self.eval_call_args(args)?;
                 self.call(callee, args, Value::Undefined, true)
             }
             Expr::Class {
@@ -1871,6 +1890,9 @@ impl Interpreter {
                 body,
             } => self.make_class(name.clone(), extends, body),
             Expr::Super => Err(JsError::syntax_error("'super' keyword unexpected here")),
+            // Spread is only valid in call arguments / array literals; as a
+            // standalone expression it evaluates to its operand.
+            Expr::Spread(inner) => self.eval_expr(inner),
             Expr::Member { .. } | Expr::Index { .. } => self.get_target(expr),
         }
     }
