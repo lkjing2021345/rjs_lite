@@ -175,7 +175,7 @@ impl From<&JsError> for AgentErrorKind {
             JsError::Runtime { message, .. } if message.contains("call depth limit exceeded") => {
                 Self::CallDepthLimit
             }
-            JsError::Runtime { .. } => Self::Runtime,
+            JsError::Runtime { .. } | JsError::Flow(_) => Self::Runtime,
         }
     }
 }

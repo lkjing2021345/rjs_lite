@@ -50,6 +50,9 @@ pub enum JsError {
         message: String,
         error_type: JsErrorType,
     },
+    /// Control-flow sentinel: wraps a `Flow` value (Return/Throw) so it can
+    /// travel through `JsResult<()>` without a separate error type.
+    Flow(crate::interpreter::Flow),
 }
 
 impl JsError {
@@ -102,10 +105,24 @@ impl JsError {
         }
     }
 
+    /// Wrap a `Flow` value as a `JsError` so it can travel through
+    /// `JsResult<()>` in the VM's dispatch loop.
+    pub fn flow(flow: crate::interpreter::Flow) -> Self {
+        Self::Flow(flow)
+    }
+
+    /// Extract the wrapped `Flow` if this is a flow sentinel.
+    pub fn as_flow(&self) -> Option<&crate::interpreter::Flow> {
+        match self {
+            JsError::Flow(f) => Some(f),
+            _ => None,
+        }
+    }
+
     pub fn error_type(&self) -> Option<&JsErrorType> {
         match self {
             JsError::Runtime { error_type, .. } => Some(error_type),
-            JsError::Parse { .. } | JsError::Lex { .. } => None,
+            JsError::Parse { .. } | JsError::Lex { .. } | JsError::Flow(_) => None,
         }
     }
 }
@@ -125,6 +142,7 @@ impl fmt::Display for JsError {
                 message,
                 error_type,
             } => write!(f, "{}: {}", error_type.as_str(), message),
+            JsError::Flow(flow) => write!(f, "Flow: {flow:?}"),
         }
     }
 }

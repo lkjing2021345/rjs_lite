@@ -6,44 +6,44 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Clone)]
-struct Binding {
+pub(crate) struct Binding {
     value: Value,
     mutable: bool,
 }
 
 #[derive(Clone)]
-struct Env {
+pub(crate) struct Env {
     values: HashMap<String, Binding>,
     parent: Option<Rc<RefCell<Env>>>,
 }
 
 impl Env {
-    fn new() -> Rc<RefCell<Self>> {
+    pub(crate) fn new() -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
             values: HashMap::new(),
             parent: None,
         }))
     }
 
-    fn child(parent: Rc<RefCell<Env>>) -> Rc<RefCell<Self>> {
+    pub(crate) fn child(parent: Rc<RefCell<Env>>) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
             values: HashMap::new(),
             parent: Some(parent),
         }))
     }
 
-    fn define(&mut self, name: String, value: Value, mutable: bool) {
+    pub(crate) fn define(&mut self, name: String, value: Value, mutable: bool) {
         self.values.insert(name, Binding { value, mutable });
     }
 
-    fn get(&self, name: &str) -> Option<Value> {
+    pub(crate) fn get(&self, name: &str) -> Option<Value> {
         self.values
             .get(name)
             .map(|b| b.value.clone())
             .or_else(|| self.parent.as_ref().and_then(|p| p.borrow().get(name)))
     }
 
-    fn assign(&mut self, name: &str, value: Value) -> JsResult<()> {
+    pub(crate) fn assign(&mut self, name: &str, value: Value) -> JsResult<()> {
         if let Some(binding) = self.values.get_mut(name) {
             if !binding.mutable {
                 return Err(JsError::type_error(format!("assignment to constant variable `{name}`")));
@@ -59,7 +59,8 @@ impl Env {
     }
 }
 
-enum Flow {
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Flow {
     Value(Value),
     Return(Value),
     Throw(Value),
@@ -73,24 +74,24 @@ struct RefTarget {
 }
 
 pub struct Interpreter {
-    env: Rc<RefCell<Env>>,
-    closures: HashMap<usize, Rc<RefCell<Env>>>,
-    output: Vec<String>,
-    global: ObjectRef,
-    object_proto: ObjectRef,
-    function_proto: ObjectRef,
-    array_proto: ObjectRef,
-    error_proto: ObjectRef,
-    string_proto: ObjectRef,
-    number_proto: ObjectRef,
-    boolean_proto: ObjectRef,
-    step_limit: Option<usize>,
-    steps: usize,
-    max_call_depth: Option<usize>,
-    call_depth: usize,
-    output_limit: Option<usize>,
-    output_truncated: bool,
-    strict: bool,
+    pub(crate) env: Rc<RefCell<Env>>,
+    pub(crate) closures: HashMap<usize, Rc<RefCell<Env>>>,
+    pub(crate) output: Vec<String>,
+    pub(crate) global: ObjectRef,
+    pub(crate) object_proto: ObjectRef,
+    pub(crate) function_proto: ObjectRef,
+    pub(crate) array_proto: ObjectRef,
+    pub(crate) error_proto: ObjectRef,
+    pub(crate) string_proto: ObjectRef,
+    pub(crate) number_proto: ObjectRef,
+    pub(crate) boolean_proto: ObjectRef,
+    pub(crate) step_limit: Option<usize>,
+    pub(crate) steps: usize,
+    pub(crate) max_call_depth: Option<usize>,
+    pub(crate) call_depth: usize,
+    pub(crate) output_limit: Option<usize>,
+    pub(crate) output_truncated: bool,
+    pub(crate) strict: bool,
 }
 
 impl Interpreter {
@@ -160,7 +161,7 @@ impl Interpreter {
         this
     }
 
-    fn install_builtins(&mut self) {
+    pub(crate) fn install_builtins(&mut self) {
         self.define_native("print");
         self.define_native("Error");
         self.define_native("TypeError");
@@ -758,7 +759,7 @@ impl Interpreter {
         Self::define_non_enumerable(&self.array_proto, "values", self.native_method("Array.prototype.values"));
     }
 
-    fn define_non_enumerable(object: &ObjectRef, property: &str, value: Value) {
+    pub(crate) fn define_non_enumerable(object: &ObjectRef, property: &str, value: Value) {
         let mut object = object.borrow_mut();
         object.props.insert(property.to_string(), value);
         object.non_enumerable_props.insert(property.to_string());
@@ -769,7 +770,7 @@ impl Interpreter {
         self.define_global(name, value, false);
     }
 
-    fn native_method(&self, name: &'static str) -> Value {
+    pub(crate) fn native_method(&self, name: &'static str) -> Value {
         let obj = Object::with_internal(Internal::Native(name));
         obj.borrow_mut().proto = Some(self.function_proto.clone());
         Self::define_non_enumerable(&obj, "prototype", Value::Object(Object::plain()));
@@ -786,14 +787,14 @@ impl Interpreter {
             .insert(name.to_string(), value);
     }
 
-    fn same_value_zero(left: &Value, right: &Value) -> bool {
+    pub(crate) fn same_value_zero(left: &Value, right: &Value) -> bool {
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => a == b || (a.is_nan() && b.is_nan()),
             _ => left == right,
         }
     }
 
-    fn array_slice_bound(value: f64, len: isize) -> isize {
+    pub(crate) fn array_slice_bound(value: f64, len: isize) -> isize {
         if value.is_nan() {
             return 0;
         }
@@ -1385,7 +1386,7 @@ impl Interpreter {
         }
     }
 
-    fn get_property(&self, object: &ObjectRef, property: &str) -> Value {
+    pub(crate) fn get_property(&self, object: &ObjectRef, property: &str) -> Value {
         if let Internal::Array(items) = &object.borrow().internal {
             if property == "length" {
                 return Value::Number(items.len() as f64);
@@ -1397,7 +1398,7 @@ impl Interpreter {
         Object::lookup(object, property).unwrap_or(Value::Undefined)
     }
 
-    fn get_property_on_value(&self, value: &Value, property: &str) -> Value {
+    pub(crate) fn get_property_on_value(&self, value: &Value, property: &str) -> Value {
         match value {
             Value::String(s) => {
                 if property == "length" {
@@ -1416,7 +1417,7 @@ impl Interpreter {
         }
     }
 
-    fn set_property(&self, object: &ObjectRef, property: &str, value: Value) {
+    pub(crate) fn set_property(&self, object: &ObjectRef, property: &str, value: Value) {
         if let Internal::Array(items) = &mut object.borrow_mut().internal {
             if property == "length" {
                 let n = value.to_number();
@@ -1560,7 +1561,7 @@ impl Interpreter {
         }
     }
 
-    fn instanceof(&self, left: Value, right: Value) -> bool {
+    pub(crate) fn instanceof(&self, left: Value, right: Value) -> bool {
         let Value::Object(obj) = left else {
             return false;
         };
@@ -1673,7 +1674,7 @@ impl Interpreter {
         }
     }
 
-    fn call_native(
+    pub(crate) fn call_native(
         &mut self,
         name: &'static str,
         args: Vec<Value>,
@@ -3605,7 +3606,7 @@ impl Interpreter {
         else { Ok(result) }
     }
 
-    fn this_str(&self, this_value: &Value) -> String {
+    pub(crate) fn this_str(&self, this_value: &Value) -> String {
         match this_value {
             Value::String(s) => s.clone(),
             Value::Object(o) => {
