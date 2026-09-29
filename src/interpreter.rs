@@ -1384,7 +1384,15 @@ impl Interpreter {
 
     fn assign_target(&mut self, target: &Expr, value: Value) -> JsResult<()> {
         match target {
-            Expr::Identifier(name) => self.env.borrow_mut().assign(name, value),
+            Expr::Identifier(name) => {
+                // Strict mode: `arguments` is immutable.
+                if self.strict && name == "arguments" {
+                    return Err(JsError::syntax_error(
+                        "in strict mode code, functions may not be invoked with 'arguments' reassigned",
+                    ));
+                }
+                self.env.borrow_mut().assign(name, value)
+            }
             Expr::Member { .. } | Expr::Index { .. } => {
                 let r = self.get_ref(target)?;
                 self.set_property(&r.object, &r.property, value);
@@ -1662,8 +1670,6 @@ impl Interpreter {
                     let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
                     let args_obj = Object::with_internal(Internal::Array(slots));
                     args_obj.borrow_mut().proto = Some(self.array_proto.clone());
-                    // Non-enumerable length (set by Array internal).
-                    // Add `callee` pointing back to the function (non-strict).
                     if !self.strict {
                         Interpreter::define_non_enumerable(
                             &args_obj,
