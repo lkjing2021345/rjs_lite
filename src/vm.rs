@@ -222,15 +222,21 @@ impl Vm {
     /// function returns, an exception escapes every active handler, or a
     /// hard runtime error occurs.
     fn run_to(&mut self, end: usize) -> JsResult<Value> {
+        let mut last_value = Value::Undefined;
         loop {
             self.step()?;
             if self.pc >= end {
-                return Ok(self.pop());
+                return Ok(last_value);
             }
             let instr = self.current_stream()[self.pc].clone();
             self.pc += 1;
             match self.execute(instr) {
-                Ok(()) => {}
+                Ok(()) => {
+                    // Track the last value pushed (before Pop can discard it).
+                    if let Some(v) = self.stack.last() {
+                        last_value = v.clone();
+                    }
+                }
                 Err(e) => {
                     if let Some(flow) = e.as_flow() {
                         match flow {
@@ -282,12 +288,13 @@ impl Vm {
     /// Restore the caller's state after a `return` and return the value.
     fn finish_frame(&mut self) -> Value {
         let frame = self.frames.pop().unwrap();
+        let ret = self.pop();  // Pop return value from callee's stack first
         self.pc = frame.return_pc;
         self.env = frame.saved_env;
         self.stack = frame.saved_stack;
         self.forin = frame.saved_forin;
         self.handlers = frame.saved_handlers;
-        self.pop()
+        ret
     }
 
     /// Walk the handler stack (and frame stack) to find the innermost

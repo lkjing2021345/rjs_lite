@@ -14,9 +14,10 @@ use crate::ast::{BinaryOp, Expr, Stmt, UnaryOp};
 use crate::bytecode::{FunctionBytecode, Instruction, Program};
 
 /// Context for `break` / `continue` while compiling a function body.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct LoopContext {
-    break_target: usize,
+    /// Indices of `Jump` instructions emitted for `break` (to be backpatched).
+    break_jumps: Vec<usize>,
     continue_target: usize,
 }
 
@@ -189,17 +190,20 @@ impl<'a> Compiler<'a> {
             }
             Stmt::While { condition, body } => {
                 let loop_start = self.stream().len();
-                let break_target = self.stream().len();
                 self.emit_expr(condition);
                 let exit_jump = self.emit_jump(|t| Instruction::JumpIfFalse(t));
                 self.loops.push(LoopContext {
-                    break_target,
+                    break_jumps: Vec::new(),
                     continue_target: loop_start,
                 });
                 self.emit_statements(body);
-                self.loops.pop();
+                let ctx = self.loops.pop().unwrap();
                 self.emit(Instruction::Loop(loop_start));
-                self.backpatch(exit_jump, self.stream().len());
+                let break_target = self.stream().len();
+                self.backpatch(exit_jump, break_target);
+                for idx in ctx.break_jumps {
+                    self.backpatch(idx, break_target);
+                }
             }
             Stmt::For {
                 init,
@@ -216,28 +220,36 @@ impl<'a> Compiler<'a> {
                     self.emit_expr(cond);
                     let exit_jump = self.emit_jump(|t| Instruction::JumpIfFalse(t));
                     self.loops.push(LoopContext {
-                        break_target: self.stream().len(),
+                        break_jumps: Vec::new(),
                         continue_target,
                     });
                     self.emit_statements(body);
-                    self.loops.pop();
+                    let ctx = self.loops.pop().unwrap();
                     if let Some(update) = update {
                         self.emit_expr(update);
                     }
                     self.emit(Instruction::Loop(loop_start));
-                    self.backpatch(exit_jump, self.stream().len());
+                    let break_target = self.stream().len();
+                    self.backpatch(exit_jump, break_target);
+                    for idx in ctx.break_jumps {
+                        self.backpatch(idx, break_target);
+                    }
                 } else {
                     // No condition: infinite loop.
                     self.loops.push(LoopContext {
-                        break_target: self.stream().len(),
+                        break_jumps: Vec::new(),
                         continue_target,
                     });
                     self.emit_statements(body);
-                    self.loops.pop();
+                    let ctx = self.loops.pop().unwrap();
                     if let Some(update) = update {
                         self.emit_expr(update);
                     }
                     self.emit(Instruction::Loop(loop_start));
+                    let break_target = self.stream().len();
+                    for idx in ctx.break_jumps {
+                        self.backpatch(idx, break_target);
+                    }
                 }
             }
             Stmt::ForIn { left, right, body } => {
@@ -245,16 +257,20 @@ impl<'a> Compiler<'a> {
                 let loop_start = self.stream().len();
                 let header_idx = self.emit(Instruction::ForIn(usize::MAX));
                 self.loops.push(LoopContext {
-                    break_target: self.stream().len(),
+                    break_jumps: Vec::new(),
                     continue_target: loop_start,
                 });
                 // Assign the current key to `left`.
                 self.emit(Instruction::GetLocal("__forin_key__".to_string()));
                 self.emit_target(left);
                 self.emit_statements(body);
-                self.loops.pop();
+                let ctx = self.loops.pop().unwrap();
                 self.emit(Instruction::ForInEnd);
+                let break_target = self.stream().len();
                 self.program.instructions[header_idx] = Instruction::ForIn(loop_start);
+                for idx in ctx.break_jumps {
+                    self.backpatch(idx, break_target);
+                }
             }
             Stmt::Switch {
                 discriminant,
@@ -263,27 +279,35 @@ impl<'a> Compiler<'a> {
             } => {
                 self.emit_expr(discriminant);
                 let mut case_jumps: Vec<usize> = Vec::new();
+                let mut end_jumps: Vec<usize> = Vec::new();
                 for (test, body) in cases {
                     self.emit(Instruction::Dup);
                     self.emit_expr(test);
                     self.emit(Instruction::Binary(BinaryOp::Equal));
                     case_jumps.push(self.emit_jump(|t| Instruction::JumpIfFalse(t)));
                     self.emit_statements(body);
+                    // After a case body, jump over the remaining cases
+                    // (fallthrough is handled by the next case's test).
+                    end_jumps.push(self.emit_jump(|t| Instruction::Jump(t)));
                 }
                 let default_idx = self.stream().len();
                 for jump in case_jumps {
                     self.backpatch(jump, default_idx);
                 }
                 self.emit_statements(default);
+                let end_idx = self.stream().len();
+                for jump in end_jumps {
+                    self.backpatch(jump, end_idx);
+                }
             }
             Stmt::Block(stmts) => self.emit_statements(stmts),
             Stmt::Break => {
-                let target = self
-                    .loops
-                    .last()
-                    .map(|l| l.break_target)
-                    .expect("break outside of loop");
-                self.emit(Instruction::Jump(target));
+                let idx = self.emit_jump(|t| Instruction::Jump(t));
+                if let Some(ctx) = self.loops.last_mut() {
+                    ctx.break_jumps.push(idx);
+                } else {
+                    panic!("break outside of loop");
+                }
             }
             Stmt::Continue => {
                 let target = self

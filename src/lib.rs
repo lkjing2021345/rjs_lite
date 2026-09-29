@@ -8,6 +8,7 @@ pub mod lexer;
 pub mod parser;
 pub mod token;
 pub mod value;
+pub mod vm;
 
 pub use agent::{
     AgentErrorKind, AgentRuntime, AgentToolResult, ExecutionContext, HostFunction, RuntimeLimits,
@@ -84,6 +85,28 @@ pub fn run_source_with_output_and_all_limits(
             max_call_depth,
             max_output_lines,
         ),
+    )
+}
+
+pub fn run_vm_source(source: &str) -> JsResult<Value> {
+    vm::run_vm_source(source)
+}
+
+pub fn run_vm_source_with_output(source: &str) -> JsResult<(Value, Vec<String>)> {
+    vm::run_vm_source_with_output(source)
+}
+
+pub fn run_vm_source_with_output_and_limits(
+    source: &str,
+    max_execution_steps: usize,
+    max_call_depth: usize,
+    max_output_lines: usize,
+) -> JsResult<(Value, Vec<String>, bool)> {
+    vm::run_vm_source_with_output_and_limits(
+        source,
+        max_execution_steps,
+        max_call_depth,
+        max_output_lines,
     )
 }
 
