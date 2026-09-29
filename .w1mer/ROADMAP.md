@@ -48,8 +48,16 @@
 ## 五、Backlog
 
 (Items awaiting re-prioritization)
-- Bytecode VM execution layer (after AST interpreter stabilizes)
 - class, module, async, generator, promise, symbol, BigInt
 - Full ECMAScript type coercion rules
 - JIT / advanced optimization pipeline
 <!-- w1mer:task:backlog -->
+
+## 六、Bytecode VM
+
+| # | Task | Doc | Status | Effect |
+|---|------|-----|--------|--------|
+| 06 | Design opcode set + bytecode format (compile AST → bytecode) | 06.md | doing | Bytecode format + AST→bytecode compiler implemented (src/bytecode.rs, src/compiler.rs); awaiting cargo build + commit (no shell tool in session) |
+| 07 | Implement register-based VM (operand stack, execution loop, call frames) | 07.md | todo | |
+| 08 | Integrate VM: CLI flag --vm, run same test suite, parity check | 08.md | todo | |
+<!-- w1mer:task:vm -->
