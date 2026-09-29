@@ -1392,39 +1392,54 @@ impl Parser {
                 }
                 continue;
             }
-            // Computed property: `[expr]: value`
+            // Generator / async-generator method prefix:
+            // `*name(...) {}`, `*['a'](...) {}`, `async *name(...) {}`.
+            let mut is_generator = false;
+            let mut is_async = false;
+            if self.at(&TokenKind::Star) {
+                self.advance();
+                is_generator = true;
+            } else if self.at(&TokenKind::Async)
+                && self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|t| matches!(t.kind, TokenKind::Star))
+            {
+                self.advance();
+                self.advance();
+                is_generator = true;
+                is_async = true;
+            }
+            // Computed property: `[expr]: value` or `[expr](...) {}` (method).
             if self.at(&TokenKind::LeftBracket) {
                 self.advance(); // consume `[`
                 let key_expr = self.expression()?;
                 self.expect(&TokenKind::RightBracket)?;
-                self.expect(&TokenKind::Colon)?;
-                let value = self.expression()?;
-                // Store the computed key as a special marker; we use the
-                // stringified form of the key expression for now.
                 let key = format!("computed:{}", Self::key_expr_to_string(&key_expr));
-                props.push((Some(key), value));
-            } else {
-                // Generator / async-generator method prefix:
-                // `*name(...) {}` or `async *name(...) {}`.
-                let mut is_generator = false;
-                let mut is_async = false;
-                if self.at(&TokenKind::Star) {
-                    self.advance();
-                    is_generator = true;
-                } else if self.at(&TokenKind::Async)
-                    && self
-                        .tokens
-                        .get(self.pos + 1)
-                        .is_some_and(|t| matches!(t.kind, TokenKind::Star))
-                {
-                    self.advance();
-                    self.advance();
-                    is_generator = true;
-                    is_async = true;
+                if self.eat(&TokenKind::Colon) {
+                    let value = self.expression()?;
+                    props.push((Some(key), value));
+                } else if self.at(&TokenKind::LeftParen) {
+                    // Method with computed key: `[expr](params) { body }`
+                    self.advance(); // consume `(`
+                    let params = self.params()?;
+                    self.expect(&TokenKind::LeftBrace)?;
+                    let body = self.block()?;
+                    let k = key.clone();
+                    let value = if is_async {
+                        Expr::AsyncFunction { name: Some(k), params, body, generator: true }
+                    } else {
+                        Expr::Function { name: Some(k), params, body, generator: is_generator }
+                    };
+                    props.push((Some(key), value));
+                } else {
+                    return Err(self.error("expected Colon or method params after computed key"));
                 }
+            } else {
                 let key = match self.advance().clone().kind {
                     TokenKind::Identifier(s) | TokenKind::String(s) => Some(s),
                     TokenKind::Number(n) => Some(n.to_string()),
+                    TokenKind::PrivateName(s) => Some(s),
                     _ => return Err(self.error("expected object property name")),
                 };
                 if self.eat(&TokenKind::Colon) {
