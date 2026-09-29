@@ -354,6 +354,16 @@ impl Interpreter {
                 self.native_method("Object.isSealed"),
             );
             Self::define_non_enumerable(
+                &object_ctor,
+                "fromEntries",
+                self.native_method("Object.fromEntries"),
+            );
+            Self::define_non_enumerable(
+                &object_ctor,
+                "defineProperties",
+                self.native_method("Object.defineProperties"),
+            );
+            Self::define_non_enumerable(
                 &self.object_proto,
                 "toString",
                 self.native_method("Object.prototype.toString"),
@@ -520,6 +530,11 @@ impl Interpreter {
                 "lastIndexOf",
                 self.native_method("Array.prototype.lastIndexOf"),
             );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "at",
+                self.native_method("Array.prototype.at"),
+            );
         }
         if let Some(Value::Object(string_ctor)) = self.env.borrow().get("String") {
             Self::define_non_enumerable(
@@ -632,6 +647,36 @@ impl Interpreter {
                 "padEnd",
                 self.native_method("String.prototype.padEnd"),
             );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "at",
+                self.native_method("String.prototype.at"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "codePointAt",
+                self.native_method("String.prototype.codePointAt"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "replaceAll",
+                self.native_method("String.prototype.replaceAll"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "localeCompare",
+                self.native_method("String.prototype.localeCompare"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "search",
+                self.native_method("String.prototype.search"),
+            );
+            Self::define_non_enumerable(
+                &self.string_proto,
+                "match",
+                self.native_method("String.prototype.match"),
+            );
         }
         if let Some(Value::Object(number_ctor)) = self.env.borrow().get("Number") {
             Self::define_non_enumerable(
@@ -664,10 +709,17 @@ impl Interpreter {
                 );
             }
         }
-        for name in ["Number.isNaN", "Number.isFinite", "Number.parseInt", "Number.parseFloat", "Number.isInteger"] {
+        for name in [
+            "Number.isNaN",
+            "Number.isFinite",
+            "Number.parseInt",
+            "Number.parseFloat",
+            "Number.isInteger",
+        ] {
             self.define_native(name);
         }
         if let Some(Value::Object(number_ctor)) = self.env.borrow().get("Number") {
+            Self::define_non_enumerable(&number_ctor, "isSafeInteger", self.native_method("Number.isSafeInteger"));
             Self::define_non_enumerable(&number_ctor, "MAX_VALUE", Value::Number(f64::MAX));
             Self::define_non_enumerable(&number_ctor, "MIN_VALUE", Value::Number(f64::MIN_POSITIVE));
             Self::define_non_enumerable(&number_ctor, "NaN", Value::Number(f64::NAN));
@@ -2613,6 +2665,25 @@ impl Interpreter {
                 }
                 Ok(Value::Number(-1.0))
             }
+            "Array.prototype.at" => {
+                let index = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+                if let Value::Object(o) = this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    let len = items.len() as isize;
+                    let pos = if index.is_nan() {
+                        0
+                    } else if index < 0.0 {
+                        len + index as isize
+                    } else {
+                        index as isize
+                    };
+                    if pos >= 0 && pos < len {
+                        return Ok(items[pos as usize].clone().unwrap_or(Value::Undefined));
+                    }
+                }
+                Ok(Value::Undefined)
+            }
             "Array.from" => {
                 let callback = if args.len() > 1 {
                     args.get(1).cloned()
@@ -2713,6 +2784,46 @@ impl Interpreter {
                     Ok(Value::Number(f64::NAN))
                 } else {
                     Ok(Value::Number(s.chars().nth(pos as usize).map_or(f64::NAN, |c| c as u32 as f64)))
+                }
+            }
+            "String.prototype.codePointAt" => {
+                let s = self.this_str(&this_value);
+                let pos = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+                if pos.is_nan() || pos < 0.0 || pos >= s.len() as f64 {
+                    return Ok(Value::Undefined);
+                }
+                let pos = pos as usize;
+                let mut chars = s.chars().skip(pos);
+                let Some(first) = chars.next() else {
+                    return Ok(Value::Undefined);
+                };
+                let code_point = if (0xD800..0xDC00).contains(&(first as u32))
+                    && let Some(second) = chars.next()
+                    && (0xDC00..0xE000).contains(&(second as u32))
+                {
+                    0x10000
+                        + ((first as u32 - 0xD800) << 10)
+                        + (second as u32 - 0xDC00)
+                } else {
+                    first as u32
+                };
+                Ok(Value::Number(code_point as f64))
+            }
+            "String.prototype.at" => {
+                let s = self.this_str(&this_value);
+                let len = s.len() as isize;
+                let index = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
+                let pos = if index.is_nan() {
+                    0
+                } else if index < 0.0 {
+                    len + index as isize
+                } else {
+                    index as isize
+                };
+                if pos >= 0 && pos < len {
+                    Ok(Value::String(s.chars().nth(pos as usize).unwrap_or(' ').to_string()))
+                } else {
+                    Ok(Value::String(String::new()))
                 }
             }
             "String.prototype.trim" => {
@@ -2834,6 +2945,89 @@ impl Interpreter {
                     let need = max_len - s.len();
                     let pad_repeat = pad.repeat((need / pad.len()) + 1);
                     Ok(Value::String(format!("{}{}", s, &pad_repeat[..need])))
+                }
+            }
+            "String.prototype.replaceAll" => {
+                let s = self.this_str(&this_value);
+                let needle = args.first().cloned().unwrap_or(Value::Undefined).to_string();
+                let replacement = args.get(1).cloned().unwrap_or(Value::Undefined).to_string();
+                if needle.is_empty() {
+                    return Ok(Value::String(s));
+                }
+                let mut result = String::new();
+                let mut rest = s.as_str();
+                while let Some(pos) = rest.find(&needle) {
+                    result.push_str(&rest[..pos]);
+                    result.push_str(&replacement);
+                    rest = &rest[pos + needle.len()..];
+                }
+                result.push_str(rest);
+                Ok(Value::String(result))
+            }
+            "String.prototype.localeCompare" => {
+                let s = self.this_str(&this_value);
+                let other = args
+                    .first()
+                    .cloned()
+                    .unwrap_or(Value::Undefined)
+                    .to_string();
+                let result = s.cmp(&other);
+                Ok(Value::Number(if result == std::cmp::Ordering::Equal {
+                    0.0
+                } else if result == std::cmp::Ordering::Less {
+                    -1.0
+                } else {
+                    1.0
+                }))
+            }
+            "String.prototype.search" => {
+                let s = self.this_str(&this_value);
+                let pattern = if let Some(Value::Object(o)) = args.first() {
+                    o.borrow()
+                        .props
+                        .get("source")
+                        .cloned()
+                        .unwrap_or(Value::String(String::new()))
+                        .to_string()
+                } else {
+                    args.first().cloned().unwrap_or(Value::Undefined).to_string()
+                };
+                if pattern.is_empty() {
+                    return Ok(Value::Number(0.0));
+                }
+                match s.find(&pattern) {
+                    Some(pos) => Ok(Value::Number(pos as f64)),
+                    None => Ok(Value::Number(-1.0)),
+                }
+            }
+            "String.prototype.match" => {
+                let s = self.this_str(&this_value);
+                let pattern = if let Some(Value::Object(o)) = args.first() {
+                    o.borrow()
+                        .props
+                        .get("source")
+                        .cloned()
+                        .unwrap_or(Value::String(String::new()))
+                        .to_string()
+                } else {
+                    args.first().cloned().unwrap_or(Value::Undefined).to_string()
+                };
+                if pattern.is_empty() {
+                    return Ok(Value::Null);
+                }
+                match s.find(&pattern) {
+                    Some(pos) => {
+                        let end = pos + pattern.len();
+                        let matched = s[pos..end].to_string();
+                        let obj = Object::with_internal(Internal::Array(vec![
+                            Some(Value::String(matched.clone())),
+                        ]));
+                        obj.borrow_mut().proto = Some(self.array_proto.clone());
+                        obj.borrow_mut().props.insert("index".into(), Value::Number(pos as f64));
+                        obj.borrow_mut().props.insert("input".into(), Value::String(s.clone()));
+                        Ok(Value::Object(obj))
+                    }
+                    None => Ok(Value::Null),
                 }
             }
             "String.fromCharCode" => {
@@ -2986,6 +3180,72 @@ impl Interpreter {
                 arr.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(arr))
             }
+            "Object.fromEntries" => {
+                let obj = Object::plain();
+                obj.borrow_mut().proto = Some(self.object_proto.clone());
+                if let Value::Object(entries) = args.first().cloned().unwrap_or(Value::Undefined) {
+                    let items = if let Internal::Array(items) = &entries.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    for pair in items {
+                        let Some(Value::Object(pair_obj)) = pair else {
+                            continue;
+                        };
+                        let pair = pair_obj.borrow();
+                        if let Internal::Array(pair_items) = &pair.internal {
+                            if let (Some(key_v), Some(value_v)) = (pair_items.first(), pair_items.get(1)) {
+                                if let (Some(key), Some(value)) = (key_v.as_ref(), value_v.as_ref()) {
+                                    let key = key.to_string();
+                                    let mut target = obj.borrow_mut();
+                                    if !target.non_enumerable_props.contains(&key) {
+                                        target.props.insert(key, value.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Value::Object(obj))
+            }
+            "Object.defineProperties" => {
+                let Some(Value::Object(target)) = args.first().cloned() else {
+                    return Err(JsError::type_error("Object.defineProperties expects object"));
+                };
+                let Some(Value::Object(properties)) = args.get(1).cloned() else {
+                    return Err(JsError::type_error(
+                        "Object.defineProperties expects properties object",
+                    ));
+                };
+                let descriptors: Vec<(String, Value)> = {
+                    let props = properties.borrow();
+                    props
+                        .props
+                        .iter()
+                        .filter_map(|(key, value)| {
+                            if let Value::Object(descriptor) = value {
+                                Some((key.clone(), Value::Object(descriptor.clone())))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
+                for (key, descriptor) in descriptors {
+                    self.call_native(
+                        "Object.defineProperty",
+                        vec![
+                            Value::Object(target.clone()),
+                            Value::String(key),
+                            descriptor,
+                        ],
+                        Value::Undefined,
+                        None,
+                    )?;
+                }
+                Ok(Value::Object(target))
+            }
             "Object.is" => Ok(Value::Bool(same_value(
                 &args.first().cloned().unwrap_or(Value::Undefined),
                 &args.get(1).cloned().unwrap_or(Value::Undefined),
@@ -3074,6 +3334,15 @@ impl Interpreter {
             "Number.isInteger" => Ok(Value::Bool(
                 args.first().map(|v| { let n = v.to_number(); n.is_finite() && n.fract() == 0.0 }).unwrap_or(false),
             )),
+            "Number.isSafeInteger" => {
+                let max_safe = 9007199254740991.0;
+                Ok(Value::Bool(
+                    args.first().map(|v| {
+                        let n = v.to_number();
+                        n.is_finite() && n.fract() == 0.0 && n.abs() <= max_safe
+                    }).unwrap_or(false),
+                ))
+            }
             "Boolean.prototype.toString" => Ok(Value::String(this_value.is_truthy().to_string())),
             "Boolean.prototype.valueOf" => Ok(Value::Bool(this_value.is_truthy())),
             "Error.prototype.toString" => {
@@ -4355,6 +4624,243 @@ mod tests {
     #[test]
     fn object_prototype_is_prototype_of_returns_false_for_null() {
         let src = "let proto={}; proto.isPrototypeOf(null);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // ---- Task 02: expand standard library (remaining Array/Object/String methods) ----
+
+    // Array.prototype.at
+    #[test]
+    fn array_at_positive_index() {
+        let src = "[10,20,30].at(1);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(20.0));
+    }
+
+    #[test]
+    fn array_at_negative_index_counts_from_end() {
+        let src = "[10,20,30].at(-1);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(30.0));
+    }
+
+    #[test]
+    fn array_at_out_of_bounds_returns_undefined() {
+        let src = "let a=[1]; a.at(5) === undefined && a.at(-5) === undefined;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn array_at_is_not_enumerable() {
+        let src = "Array.prototype.propertyIsEnumerable('at');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // String.prototype.at
+    #[test]
+    fn string_at_positive_index() {
+        let src = "'hello'.at(1);";
+        assert_eq!(run_source(src).unwrap(), Value::String("e".into()));
+    }
+
+    #[test]
+    fn string_at_negative_index_counts_from_end() {
+        let src = "'hello'.at(-1);";
+        assert_eq!(run_source(src).unwrap(), Value::String("o".into()));
+    }
+
+    #[test]
+    fn string_at_out_of_bounds_returns_empty_string() {
+        let src = "let s='ab'; s.at(5) === '' && s.at(-5) === '';";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn string_at_is_not_enumerable() {
+        let src = "String.prototype.propertyIsEnumerable('at');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // String.prototype.codePointAt
+    #[test]
+    fn string_code_point_at_ascii() {
+        let src = "'abc'.codePointAt(1);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(98.0));
+    }
+
+    #[test]
+    fn string_code_point_at_surrogate_pair() {
+        let src = "'😀'.codePointAt(0);";
+        assert_eq!(run_source(src).unwrap(), Value::Number(128512.0));
+    }
+
+    #[test]
+    fn string_code_point_at_out_of_bounds_returns_undefined() {
+        let src = "'ab'.codePointAt(5) === undefined;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn string_code_point_at_is_not_enumerable() {
+        let src = "String.prototype.propertyIsEnumerable('codePointAt');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // String.prototype.replaceAll
+    #[test]
+    fn string_replace_all_replaces_every_occurrence() {
+        let src = "'a-b-a'.replaceAll('a', 'x');";
+        assert_eq!(run_source(src).unwrap(), Value::String("x-b-x".into()));
+    }
+
+    #[test]
+    fn string_replace_all_no_match_returns_original() {
+        let src = "'abc'.replaceAll('z', 'x');";
+        assert_eq!(run_source(src).unwrap(), Value::String("abc".into()));
+    }
+
+    #[test]
+    fn string_replace_all_replaces_multi_char_needle() {
+        let src = "'ababab'.replaceAll('ab', 'xy');";
+        assert_eq!(run_source(src).unwrap(), Value::String("xyxyxy".into()));
+    }
+
+    #[test]
+    fn string_replace_all_is_not_enumerable() {
+        let src = "String.prototype.propertyIsEnumerable('replaceAll');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // String.prototype.localeCompare
+    #[test]
+    fn string_locale_compare_equal_strings() {
+        let src = "'abc'.localeCompare('abc');";
+        assert_eq!(run_source(src).unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn string_locale_compare_less_and_greater() {
+        let src = "'abc'.localeCompare('abd') < 0 && 'abd'.localeCompare('abc') > 0;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn string_locale_compare_is_not_enumerable() {
+        let src = "String.prototype.propertyIsEnumerable('localeCompare');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // String.prototype.search
+    #[test]
+    fn string_search_finds_first_match() {
+        let src = "'hello world'.search('world');";
+        assert_eq!(run_source(src).unwrap(), Value::Number(6.0));
+    }
+
+    #[test]
+    fn string_search_returns_minus_one_when_missing() {
+        let src = "'hello'.search('xyz');";
+        assert_eq!(run_source(src).unwrap(), Value::Number(-1.0));
+    }
+
+    #[test]
+    fn string_search_is_not_enumerable() {
+        let src = "String.prototype.propertyIsEnumerable('search');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // String.prototype.match
+    #[test]
+    fn string_match_returns_null_when_no_match() {
+        let src = "'abc'.match('xyz') === null;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn string_match_returns_first_match_with_index_and_input() {
+        let src = "let m='hello world'.match('world'); m[0] + ':' + m.index + ':' + m.input;";
+        assert_eq!(
+            run_source(src).unwrap(),
+            Value::String("world:6:hello world".into())
+        );
+    }
+
+    #[test]
+    fn string_match_is_not_enumerable() {
+        let src = "String.prototype.propertyIsEnumerable('match');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // Object.fromEntries
+    #[test]
+    fn object_from_entries_builds_object_from_pairs() {
+        let src = "let o=Object.fromEntries([['a',1],['b',2]]); o.a + ':' + o.b;";
+        assert_eq!(run_source(src).unwrap(), Value::String("1:2".into()));
+    }
+
+    #[test]
+    fn object_from_entries_round_trips_object_entries() {
+        let src = "let o={a:1,b:2}; Object.fromEntries(Object.entries(o)).a;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn object_from_entries_ignores_non_array_pairs() {
+        let src = "let o=Object.fromEntries([1,'x']); Object.keys(o).length;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn object_from_entries_is_not_enumerable() {
+        let src = "Object.propertyIsEnumerable('fromEntries');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // Object.defineProperties
+    #[test]
+    fn object_define_properties_sets_multiple_properties() {
+        let src = "let o={}; Object.defineProperties(o, {a: {value: 1}, b: {value: 2}}); o.a + ':' + o.b;";
+        assert_eq!(run_source(src).unwrap(), Value::String("1:2".into()));
+    }
+
+    #[test]
+    fn object_define_properties_returns_target_object() {
+        let src = "let o={}; Object.defineProperties(o, {a: {value: 1}}) === o;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_define_properties_honors_descriptor_flags() {
+        let src = "let o={}; Object.defineProperties(o, {a: {value: 1, enumerable: false}}); Object.keys(o).length;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(0.0));
+    }
+
+    #[test]
+    fn object_define_properties_is_not_enumerable() {
+        let src = "Object.propertyIsEnumerable('defineProperties');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // Number.isSafeInteger
+    #[test]
+    fn number_is_safe_integer_accepts_safe_integers() {
+        let src = "Number.isSafeInteger(0) && Number.isSafeInteger(42) && Number.isSafeInteger(9007199254740991) && Number.isSafeInteger(-9007199254740991);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn number_is_safe_integer_rejects_unsafe_integers() {
+        let src = "let big = 9007199254740991 + 2; (!Number.isSafeInteger(big)) && (!Number.isSafeInteger(-big));";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn number_is_safe_integer_rejects_non_integers_and_non_numbers() {
+        let src = "(!Number.isSafeInteger(1.5)) && (!Number.isSafeInteger('x')) && (!Number.isSafeInteger());";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn number_is_safe_integer_is_not_enumerable() {
+        let src = "Number.propertyIsEnumerable('isSafeInteger');";
         assert_eq!(run_source(src).unwrap(), Value::Bool(false));
     }
 }
