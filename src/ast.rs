@@ -27,8 +27,7 @@ pub struct ObjectPatternEntry {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    VarDecl {
-        name: Pattern,
+    VarDecl {        name: Pattern,
         value: Expr,
         mutable: bool,
     },
@@ -42,6 +41,12 @@ pub enum Stmt {
         body: Vec<Stmt>,
         /// True for `function* name(...) { ... }` generator declarations.
         generator: bool,
+    },
+    /// `class Name [extends Super] { ... }` declaration.
+    ClassDecl {
+        name: String,
+        extends: Option<Box<Expr>>,
+        body: Vec<ClassElement>,
     },
     Return(Option<Expr>),
     Throw(Expr),
@@ -115,8 +120,7 @@ pub enum Expr {
     },
     /// `yield expr` — only valid inside generator function bodies. A bare
     /// `yield` is represented as `Yield(Undefined)`.
-    Yield(Box<Expr>),
-    /// `await expr` — only valid inside async function bodies.
+    Yield(Box<Expr>),    /// `await expr` — only valid inside async function bodies.
     Await(Box<Expr>),
     TemplateLiteral {
         parts: Vec<Expr>,
@@ -169,6 +173,54 @@ pub enum Expr {
     Index {
         object: Box<Expr>,
         index: Box<Expr>,
+    },
+    /// `class [Name] [extends Super] { ... }` expression.
+    Class {
+        name: Option<String>,
+        extends: Option<Box<Expr>>,
+        body: Vec<ClassElement>,
+    },
+    /// The `super` keyword. Used as a call callee (`super(...)`) or as the
+    /// object of a member call (`super.method(...)`).
+    Super,
+}
+
+/// One member of a class body.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassElement {
+    /// A method (including `static`, `async`, and generator methods).
+    Method {
+        name: String,
+        params: Vec<Pattern>,
+        body: Vec<Stmt>,
+        is_static: bool,
+        is_generator: bool,
+        is_async: bool,
+    },
+    /// A public or private field with an optional initializer.
+    Field {
+        name: String,
+        init: Option<Box<Expr>>,
+        is_static: bool,
+        is_private: bool,
+    },
+    /// A `get name() { ... }` accessor.
+    Getter {
+        name: String,
+        body: Vec<Stmt>,
+        is_static: bool,
+    },
+    /// A `set name(param) { ... }` accessor.
+    Setter {
+        name: String,
+        param: Pattern,
+        body: Vec<Stmt>,
+        is_static: bool,
+    },
+    /// The `constructor(...) { ... }` method.
+    Constructor {
+        params: Vec<Pattern>,
+        body: Vec<Stmt>,
     },
 }
 

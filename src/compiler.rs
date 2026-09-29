@@ -10,8 +10,10 @@
 //! - `SetMember`/`SetIndex`/`SetLocal` expect `[value, object, (key)]`.
 //! - `GetMember`/`GetIndex` expect `[object, (key)]` and leave the value on top.
 
-use crate::ast::{BinaryOp, Expr, Pattern, Stmt, UnaryOp};
-use crate::bytecode::{FunctionBytecode, Instruction, Program};
+use crate::ast::{BinaryOp, ClassElement, Expr, Pattern, Stmt, UnaryOp};
+use crate::bytecode::{
+    ClassInfo, ClassMethodInfo, ClassMethodKind, FunctionBytecode, Instruction, Program,
+};
 
 /// Context for `break` / `continue` while compiling a function body.
 #[derive(Clone)]
@@ -151,6 +153,14 @@ impl<'a> Compiler<'a> {
             } => {
                 let func_idx = self.compile_function(params, body, *generator);
                 self.emit(Instruction::PushFunction(func_idx));
+                self.emit(Instruction::DefineLocal(name.clone(), false));
+            }
+            Stmt::ClassDecl {
+                name,
+                extends,
+                body,
+            } => {
+                self.emit_class(extends, body);
                 self.emit(Instruction::DefineLocal(name.clone(), false));
             }
             Stmt::Return(value) => {
@@ -392,6 +402,100 @@ impl<'a> Compiler<'a> {
 
     // --- Expressions ---
 
+    /// Emit code that pushes a class object. The superclass expression (if
+    /// any) is compiled first; `MakeClass` consumes it and pushes the class.
+    fn emit_class(&mut self, extends: &Option<Box<Expr>>, body: &[ClassElement]) {
+        // Instance field initializers run at the top of the constructor.
+        let mut ctor_params: Vec<Pattern> = Vec::new();
+        let mut ctor_body: Vec<Stmt> = Vec::new();
+        for element in body {
+            if let ClassElement::Field {
+                name,
+                init,
+                is_static: false,
+                ..
+            } = element
+            {
+                ctor_body.push(Stmt::Expr(Expr::Assign {
+                    target: Box::new(Expr::Member {
+                        object: Box::new(Expr::This),
+                        property: name.clone(),
+                    }),
+                    value: Box::new(init.as_deref().cloned().unwrap_or(Expr::Undefined)),
+                }));
+            }
+        }
+        for element in body {
+            if let ClassElement::Constructor { params, body } = element {
+                ctor_params = params.clone();
+                ctor_body.extend(body.iter().cloned());
+            }
+        }
+        // Always compile a constructor entry (possibly empty) so the VM has a
+        // valid function stream to run on `new` instead of falling back to
+        // func_index 0 (the top-level program).
+        let constructor = Some(self.compile_function(&ctor_params, &ctor_body, false));
+        let mut methods = Vec::new();
+        for element in body {
+            match element {
+                ClassElement::Method {
+                    name,
+                    params,
+                    body,
+                    is_static,
+                    is_generator,
+                    ..
+                } => {
+                    let func = self.compile_function(params, body, *is_generator);
+                    methods.push(ClassMethodInfo {
+                        name: name.clone(),
+                        kind: ClassMethodKind::Method,
+                        is_static: *is_static,
+                        func,
+                    });
+                }
+                ClassElement::Getter {
+                    name,
+                    body,
+                    is_static,
+                } => {
+                    let func = self.compile_function(&[], body, false);
+                    methods.push(ClassMethodInfo {
+                        name: name.clone(),
+                        kind: ClassMethodKind::Getter,
+                        is_static: *is_static,
+                        func,
+                    });
+                }
+                ClassElement::Setter {
+                    name,
+                    param,
+                    body,
+                    is_static,
+                } => {
+                    let func = self.compile_function(std::slice::from_ref(param), body, false);
+                    methods.push(ClassMethodInfo {
+                        name: name.clone(),
+                        kind: ClassMethodKind::Setter,
+                        is_static: *is_static,
+                        func,
+                    });
+                }
+                _ => {}
+            }
+        }
+        match extends {
+            Some(e) => self.emit_expr(e),
+            None => {
+                self.emit(Instruction::PushUndefined);
+            }
+        }
+        self.emit(Instruction::MakeClass(ClassInfo {
+            constructor,
+            methods,
+        }));
+    }
+
     fn emit_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Number(n) => { self.emit(Instruction::PushNumber(*n)); }
@@ -598,6 +702,12 @@ impl<'a> Compiler<'a> {
                 self.emit_expr(index);
                 self.emit(Instruction::GetIndex);
             }
+            Expr::Class { extends, body, .. } => {
+                self.emit_class(extends, body);
+            }
+            Expr::Super => {
+                self.emit(Instruction::GetLocal("__super__".into()));
+            }
         }
     }
 
@@ -605,6 +715,20 @@ impl<'a> Compiler<'a> {
     /// `[this, callee]`.
     fn emit_callee(&mut self, callee: &Expr) {
         match callee {
+            Expr::Super => {
+                // `super(...)`: call the parent constructor with the current
+                // `this`.
+                self.emit(Instruction::PushThis);
+                self.emit(Instruction::GetLocal("__super__".into()));
+            }
+            Expr::Member { object, property } if matches!(object.as_ref(), Expr::Super) => {
+                // `super.method(...)`: this is the current receiver, method
+                // comes from the parent prototype.
+                self.emit(Instruction::PushThis);
+                self.emit(Instruction::GetLocal("__super__".into()));
+                self.emit(Instruction::GetMember("prototype".into()));
+                self.emit(Instruction::GetMember(property.clone()));
+            }
             Expr::Member { object, property } => {
                 self.emit_expr(object);
                 self.emit(Instruction::Dup);

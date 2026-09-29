@@ -35,6 +35,34 @@ pub enum Constant {
     RegExpFlags(String),
 }
 
+/// The kind of a class member function stored by [`ClassInfo`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ClassMethodKind {
+    Method,
+    Getter,
+    Setter,
+}
+
+/// One method compiled for a class body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassMethodInfo {
+    pub name: String,
+    pub kind: ClassMethodKind,
+    pub is_static: bool,
+    /// Index into `Program::functions` of the compiled method body.
+    pub func: usize,
+}
+
+/// Everything the VM needs to build a class object. The constructor body is
+/// compiled as an entry in `Program::functions` (with instance field
+/// initializers already prepended); the superclass value is on the stack.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassInfo {
+    /// Index into `Program::functions` of the constructor, if any.
+    pub constructor: Option<usize>,
+    pub methods: Vec<ClassMethodInfo>,
+}
+
 /// A single bytecode instruction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction {
@@ -89,6 +117,9 @@ pub enum Instruction {
 
     // --- Functions ---
     PushFunction(usize),
+    /// Build a class object. The superclass value (or `undefined`) is popped
+    /// from the stack and the class value is pushed. See [`ClassInfo`].
+    MakeClass(ClassInfo),
 
     // --- Control flow ---
     Jump(usize),

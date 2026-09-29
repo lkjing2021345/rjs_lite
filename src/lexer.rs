@@ -67,6 +67,7 @@ impl Lexer {
                 '|' => self.pipe(),
                 '`' => self.template_string(),
                 '/' => self.slash()?,
+                '#' => self.private_name()?,
                 _ => {
                     return Err(JsError::lex(
                         format!("unexpected character `{ch}`"),
@@ -474,6 +475,27 @@ impl Lexer {
         }
         self.tokens
             .push(Token::new(keyword_or_identifier(text), self.span(s, l, c)));
+    }
+
+    /// Lex a private name such as `#field`. The leading `#` is stored as part
+    /// of the name so it can never collide with an ordinary property key.
+    fn private_name(&mut self) -> JsResult<()> {
+        let (s, l, c) = (self.byte, self.line, self.column);
+        self.advance(); // consume `#`
+        if !self.peek().is_some_and(is_ident_start) {
+            return Err(JsError::lex(
+                "unexpected character `#`",
+                self.span(s, l, c),
+            ));
+        }
+        let mut text = String::from("#");
+        while let Some(ch) = self.peek().filter(|x| is_ident_part(*x)) {
+            text.push(ch);
+            self.advance();
+        }
+        self.tokens
+            .push(Token::new(TokenKind::PrivateName(text), self.span(s, l, c)));
+        Ok(())
     }
 }
 

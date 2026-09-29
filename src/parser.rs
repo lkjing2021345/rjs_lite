@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, ObjectPatternEntry, Pattern, Program, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, ClassElement, Expr, ObjectPatternEntry, Pattern, Program, Stmt, UnaryOp};
 use crate::error::{JsError, JsResult, Span};
 use crate::token::{Token, TokenKind};
 
@@ -46,6 +46,8 @@ impl Parser {
             self.var_decl(false)
         } else if self.eat(&TokenKind::Function) {
             self.function_decl()
+        } else if self.eat(&TokenKind::Class) {
+            self.class_decl()
         } else if self.eat(&TokenKind::Async) {
             self.async_function_decl()
         } else if self.eat(&TokenKind::Return) {
@@ -157,6 +159,169 @@ impl Parser {
             params,
             body,
             generator,
+        })
+    }
+
+    /// Parse a class declaration. `class` has already been consumed.
+    fn class_decl(&mut self) -> JsResult<Stmt> {
+        let name = self.identifier()?;
+        let extends = self.class_extends()?;
+        self.expect(&TokenKind::LeftBrace)?;
+        let body = self.class_body()?;
+        Ok(Stmt::ClassDecl { name, extends, body })
+    }
+
+    /// Parse a class expression. `class` has already been consumed.
+    fn class_expr(&mut self) -> JsResult<Expr> {
+        let name = self.optional_identifier()?;
+        let extends = self.class_extends()?;
+        self.expect(&TokenKind::LeftBrace)?;
+        let body = self.class_body()?;
+        Ok(Expr::Class { name, extends, body })
+    }
+
+    /// Parse an optional `extends <expression>` clause.
+    fn class_extends(&mut self) -> JsResult<Option<Box<Expr>>> {
+        if self.at_ident("extends") {
+            self.advance();
+            Ok(Some(Box::new(self.unary()?)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn class_body(&mut self) -> JsResult<Vec<ClassElement>> {
+        let mut elements = Vec::new();
+        while !self.at(&TokenKind::RightBrace) && !self.at(&TokenKind::Eof) {
+            if self.eat(&TokenKind::Semicolon) {
+                continue;
+            }
+            elements.push(self.class_element()?);
+        }
+        self.expect(&TokenKind::RightBrace)?;
+        Ok(elements)
+    }
+
+    fn class_element(&mut self) -> JsResult<ClassElement> {
+        let mut is_static = false;
+        if self.at_ident("static") && !self.next_is(&TokenKind::LeftParen) {
+            self.advance();
+            is_static = true;
+        }
+        let mut is_async = false;
+        if self.at_ident("async")
+            && !self.next_is(&TokenKind::LeftParen)
+            && !self.next_is(&TokenKind::Assign)
+        {
+            self.advance();
+            is_async = true;
+        }
+        let is_generator = self.eat(&TokenKind::Star);
+        let is_getter = self.at_ident("get") && self.next_is_property_name();
+        let is_setter = !is_getter && self.at_ident("set") && self.next_is_property_name();
+        if is_getter || is_setter {
+            self.advance();
+        }
+        let (name, is_private) = self.class_property_name()?;
+
+        if is_getter {
+            self.expect(&TokenKind::LeftParen)?;
+            self.expect(&TokenKind::RightParen)?;
+            self.expect(&TokenKind::LeftBrace)?;
+            let body = self.block()?;
+            return Ok(ClassElement::Getter {
+                name,
+                body,
+                is_static,
+            });
+        }
+        if is_setter {
+            self.expect(&TokenKind::LeftParen)?;
+            let param = self.param_pattern()?;
+            self.expect(&TokenKind::RightParen)?;
+            self.expect(&TokenKind::LeftBrace)?;
+            let body = self.block()?;
+            return Ok(ClassElement::Setter {
+                name,
+                param,
+                body,
+                is_static,
+            });
+        }
+        if self.eat(&TokenKind::LeftParen) {
+            let params = self.params()?;
+            self.expect(&TokenKind::LeftBrace)?;
+            let body = self.block()?;
+            if name == "constructor" && !is_static && !is_generator && !is_async && !is_private {
+                return Ok(ClassElement::Constructor { params, body });
+            }
+            return Ok(ClassElement::Method {
+                name,
+                params,
+                body,
+                is_static,
+                is_generator,
+                is_async,
+            });
+        }
+        // Field definition: `name` or `name = init`.
+        let init = if self.eat(&TokenKind::Assign) {
+            Some(Box::new(self.assignment()?))
+        } else {
+            None
+        };
+        self.optional_semicolon();
+        Ok(ClassElement::Field {
+            name,
+            init,
+            is_static,
+            is_private,
+        })
+    }
+
+    /// Parse a class member name: `#private`, a plain identifier/string/number,
+    /// or a computed `[expr]` key (stringified).
+    fn class_property_name(&mut self) -> JsResult<(String, bool)> {
+        if self.at(&TokenKind::LeftBracket) {
+            self.advance();
+            let key_expr = self.expression()?;
+            self.expect(&TokenKind::RightBracket)?;
+            let name = format!("computed:{}", Self::key_expr_to_string(&key_expr));
+            return Ok((name, false));
+        }
+        let token = self.advance().clone();
+        match token.kind {
+            TokenKind::PrivateName(s) => Ok((s, true)),
+            TokenKind::Identifier(s) | TokenKind::String(s) => Ok((s, false)),
+            TokenKind::Number(n) => Ok((n.to_string(), false)),
+            _ => Err(JsError::parse("expected class member name", token.span)),
+        }
+    }
+
+    /// Whether the current token is an `Identifier` with the given text.
+    fn at_ident(&self, name: &str) -> bool {
+        matches!(&self.current().kind, TokenKind::Identifier(s) if s == name)
+    }
+
+    /// Whether the token following the current one matches `kind`.
+    fn next_is(&self, kind: &TokenKind) -> bool {
+        self.tokens
+            .get(self.pos + 1)
+            .is_some_and(|t| std::mem::discriminant(&t.kind) == std::mem::discriminant(kind))
+    }
+
+    /// Whether the token following the current one can start a class member
+    /// name (used to disambiguate `get`/`set` accessors from methods).
+    fn next_is_property_name(&self) -> bool {
+        self.tokens.get(self.pos + 1).is_some_and(|t| {
+            matches!(
+                t.kind,
+                TokenKind::Identifier(_)
+                    | TokenKind::PrivateName(_)
+                    | TokenKind::String(_)
+                    | TokenKind::Number(_)
+                    | TokenKind::LeftBracket
+            )
         })
     }
 
@@ -748,10 +913,12 @@ impl Parser {
             } else {
                 Vec::new()
             };
-            Ok(Expr::New {
+            let new_expr = Expr::New {
                 callee: Box::new(callee),
                 args,
-            })
+            };
+            // Allow `new C().m()` / `new C().x` member and call chains.
+            self.postfix(new_expr)
         } else if self.eat(&TokenKind::Await) {
             Ok(Expr::Await(Box::new(self.unary()?)))
         } else if self.eat(&TokenKind::Yield) {
@@ -818,7 +985,7 @@ impl Parser {
                     index: Box::new(index),
                 };
             } else if self.eat(&TokenKind::Dot) {
-                let property = self.identifier()?;
+                let property = self.dot_property()?;
                 expr = Expr::Member {
                     object: Box::new(expr),
                     property,
@@ -831,7 +998,13 @@ impl Parser {
     }
 
     fn call(&mut self) -> JsResult<Expr> {
-        let mut expr = self.primary()?;
+        let expr = self.primary()?;
+        self.postfix(expr)
+    }
+
+    /// Apply any trailing member accesses, calls, or postfix `++`/`--` to an
+    /// already-parsed primary expression.
+    fn postfix(&mut self, mut expr: Expr) -> JsResult<Expr> {
         loop {
             if self.eat(&TokenKind::LeftParen) {
                 expr = Expr::Call {
@@ -846,7 +1019,7 @@ impl Parser {
                     index: Box::new(index),
                 };
             } else if self.eat(&TokenKind::Dot) {
-                let property = self.identifier()?;
+                let property = self.dot_property()?;
                 expr = Expr::Member {
                     object: Box::new(expr),
                     property,
@@ -919,6 +1092,8 @@ impl Parser {
             TokenKind::Null => Ok(Expr::Null),
             TokenKind::Undefined => Ok(Expr::Undefined),
             TokenKind::This => Ok(Expr::This),
+            TokenKind::Super => Ok(Expr::Super),
+            TokenKind::Class => self.class_expr(),
             TokenKind::Identifier(s) => Ok(Expr::Identifier(s)),
             TokenKind::Function => self.function_expr(),
             TokenKind::Async => self.async_function_expr(),
@@ -1211,6 +1386,15 @@ impl Parser {
 
     fn identifier(&mut self) -> JsResult<String> {
         self.identifier_token().map(|(name, _)| name)
+    }
+
+    /// Parse the property name after a `.`, allowing private names (`.#x`).
+    fn dot_property(&mut self) -> JsResult<String> {
+        let token = self.advance().clone();
+        match token.kind {
+            TokenKind::Identifier(s) | TokenKind::PrivateName(s) => Ok(s),
+            _ => Err(JsError::parse("expected property name", token.span)),
+        }
     }
     /// Capture an optional function name (Identifier) that follows `function`.
     fn optional_identifier(&mut self) -> JsResult<Option<String>> {

@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Pattern, Program, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, ClassElement, Expr, Pattern, Program, Stmt, UnaryOp};
 use crate::error::{JsError, JsResult};
 use crate::value::{Internal, Object, ObjectRef, Value};
 use std::cell::RefCell;
@@ -953,6 +953,20 @@ impl Interpreter {
                 }
                 Ok(Flow::Value(Value::Undefined))
             }
+            Stmt::ClassDecl {
+                name,
+                extends,
+                body,
+            } => {
+                let class = self.make_class(Some(name.clone()), extends, body)?;
+                self.env
+                    .borrow_mut()
+                    .define(name.clone(), class.clone(), false);
+                if self.env.borrow().parent.is_none() {
+                    self.global.borrow_mut().props.insert(name.clone(), class);
+                }
+                Ok(Flow::Value(Value::Undefined))
+            }
             Stmt::Return(value) => Ok(Flow::Return(
                 value
                     .as_ref()
@@ -1166,6 +1180,141 @@ impl Interpreter {
         let value = Value::Object(obj.clone());
         self.remember_closure(&value);
         value
+    }
+
+    /// Build a class value: a callable object (the constructor) whose
+    /// `prototype` holds the instance methods and whose own properties hold
+    /// the static members. Instance field initializers are prepended to the
+    /// constructor body so they run on `new`.
+    fn make_class(
+        &mut self,
+        name: Option<String>,
+        extends: &Option<Box<Expr>>,
+        body: &[ClassElement],
+    ) -> JsResult<Value> {
+        let parent = match extends {
+            Some(e) => Some(self.eval_expr(e)?),
+            None => None,
+        };
+        let class_obj = Object::with_internal(Internal::Function {
+            params: Vec::new(),
+            body: Vec::new(),
+            func_index: 0,
+            is_async: false,
+            generator: false,
+        });
+        class_obj.borrow_mut().proto = Some(self.function_proto.clone());
+
+        let proto_obj = Object::plain();
+        let parent_proto = match &parent {
+            Some(Value::Object(p)) => p.borrow().props.get("prototype").cloned(),
+            _ => None,
+        };
+        proto_obj.borrow_mut().proto = Some(match parent_proto {
+            Some(Value::Object(pp)) => pp,
+            _ => self.object_proto.clone(),
+        });
+        Self::define_non_enumerable(&proto_obj, "constructor", Value::Object(class_obj.clone()));
+        Self::define_non_enumerable(&class_obj, "prototype", Value::Object(proto_obj.clone()));
+        Self::define_non_enumerable(
+            &class_obj,
+            "__super__",
+            parent.clone().unwrap_or(Value::Undefined),
+        );
+
+        // Assemble the constructor: instance field initializers followed by the
+        // explicit `constructor` body (if any).
+        let mut ctor_params: Vec<Pattern> = Vec::new();
+        let mut ctor_body: Vec<Stmt> = Vec::new();
+        for element in body {
+            if let ClassElement::Field {
+                name,
+                init,
+                is_static: false,
+                ..
+            } = element
+            {
+                ctor_body.push(Stmt::Expr(Expr::Assign {
+                    target: Box::new(Expr::Member {
+                        object: Box::new(Expr::This),
+                        property: name.clone(),
+                    }),
+                    value: Box::new(init.as_deref().cloned().unwrap_or(Expr::Undefined)),
+                }));
+            }
+        }
+        for element in body {
+            match element {
+                ClassElement::Constructor { params, body } => {
+                    ctor_params = params.clone();
+                    ctor_body.extend(body.iter().cloned());
+                }
+                ClassElement::Method {
+                    name,
+                    params,
+                    body,
+                    is_static,
+                    is_generator,
+                    is_async,
+                } => {
+                    let function = self.make_function_async(
+                        params.clone(),
+                        body.clone(),
+                        *is_async,
+                        *is_generator,
+                    );
+                    let target = if *is_static { &class_obj } else { &proto_obj };
+                    Self::tag_super(&function, &parent);
+                    Self::define_non_enumerable(target, name, function);
+                }
+                ClassElement::Getter {
+                    name,
+                    body,
+                    is_static,
+                } => {
+                    let function = self.make_function(Vec::new(), body.clone());
+                    let target = if *is_static { &class_obj } else { &proto_obj };
+                    Self::tag_super(&function, &parent);
+                    let key = format!("__get_{name}");
+                    Self::define_non_enumerable(target, &key, function);
+                }
+                ClassElement::Setter {
+                    name,
+                    param,
+                    body,
+                    is_static,
+                } => {
+                    let function = self.make_function(vec![param.clone()], body.clone());
+                    let target = if *is_static { &class_obj } else { &proto_obj };
+                    Self::tag_super(&function, &parent);
+                    let key = format!("__set_{name}");
+                    Self::define_non_enumerable(target, &key, function);
+                }
+                ClassElement::Field {
+                    name,
+                    init,
+                    is_static: true,
+                    ..
+                } => {
+                    let value = match init {
+                        Some(expr) => self.eval_expr(expr)?,
+                        None => Value::Undefined,
+                    };
+                    Self::define_non_enumerable(&class_obj, name, value);
+                }
+                ClassElement::Field { .. } => {}
+            }
+        }
+
+        if let Internal::Function { params, body, .. } = &mut class_obj.borrow_mut().internal {
+            *params = ctor_params;
+            *body = ctor_body;
+        }
+        // The caller creates the binding; the declared name is not needed here.
+        let _ = name;
+        let value = Value::Object(class_obj.clone());
+        self.remember_closure(&value);
+        Ok(value)
     }
 
     /// Create a generator object wrapping a suspended generator function. The
@@ -1687,12 +1836,46 @@ impl Interpreter {
                     .collect::<JsResult<Vec<_>>>()?;
                 self.call(callee, args, Value::Undefined, true)
             }
+            Expr::Class {
+                name,
+                extends,
+                body,
+            } => self.make_class(name.clone(), extends, body),
+            Expr::Super => Err(JsError::syntax_error("'super' keyword unexpected here")),
             Expr::Member { .. } | Expr::Index { .. } => self.get_target(expr),
         }
     }
 
     fn eval_callee(&mut self, expr: &Expr) -> JsResult<(Value, Value)> {
         match expr {
+            Expr::Super => {
+                let parent = self
+                    .env
+                    .borrow()
+                    .get("__super__")
+                    .unwrap_or(Value::Undefined);
+                let this = self
+                    .env
+                    .borrow()
+                    .get("this")
+                    .unwrap_or(Value::Undefined);
+                Ok((parent, this))
+            }
+            Expr::Member { object, property } if matches!(object.as_ref(), Expr::Super) => {
+                let parent = self
+                    .env
+                    .borrow()
+                    .get("__super__")
+                    .unwrap_or(Value::Undefined);
+                let proto = self.get_property_on_value(&parent, "prototype");
+                let method = self.get_property_on_value(&proto, property);
+                let this = self
+                    .env
+                    .borrow()
+                    .get("this")
+                    .unwrap_or(Value::Undefined);
+                Ok((method, this))
+            }
             Expr::Member { object, property } => {
                 let object_value = self.eval_expr(object)?;
                 self.deny_strict_arguments_callee_value(&object_value, property)?;
@@ -1758,15 +1941,51 @@ impl Interpreter {
             Expr::Member { object, property } => {
                 let obj = self.eval_expr(object)?;
                 self.deny_strict_arguments_callee_value(&obj, property)?;
-                Ok(self.get_property_on_value(&obj, property))
+                self.read_property(&obj, property)
             }
             Expr::Index { object, index } => {
                 let obj = self.eval_expr(object)?;
                 let key = self.eval_expr(index)?.to_string();
                 self.deny_strict_arguments_callee_value(&obj, &key)?;
-                Ok(self.get_property_on_value(&obj, &key))
+                self.read_property(&obj, &key)
             }
             _ => self.eval_expr(target),
+        }
+    }
+
+    /// Read a property, invoking a class-style getter (`__get_<name>`) when one
+    /// exists along the prototype chain.
+    fn read_property(&mut self, object: &Value, key: &str) -> JsResult<Value> {
+        if let Value::Object(o) = object {
+            let getter_key = format!("__get_{key}");
+            if let Some(getter) = Self::lookup_proto(o, &getter_key) {
+                return self.call(getter, Vec::new(), object.clone(), false);
+            }
+        }
+        Ok(self.get_property_on_value(object, key))
+    }
+
+    /// Walk an object's prototype chain looking for `key`.
+    pub(crate) fn lookup_proto(object: &ObjectRef, key: &str) -> Option<Value> {
+        let mut current = Some(object.clone());
+        while let Some(o) = current {
+            if let Some(value) = o.borrow().props.get(key).cloned() {
+                return Some(value);
+            }
+            current = o.borrow().proto.clone();
+        }
+        None
+    }
+
+    /// Record the parent class on a method function so that `super` resolves
+    /// correctly when the method runs.
+    pub(crate) fn tag_super(function: &Value, parent: &Option<Value>) {
+        if let Value::Object(func) = function {
+            Self::define_non_enumerable(
+                func,
+                "__super__",
+                parent.clone().unwrap_or(Value::Undefined),
+            );
         }
     }
 
@@ -1783,11 +2002,22 @@ impl Interpreter {
             }
             Expr::Member { .. } | Expr::Index { .. } => {
                 let r = self.get_ref(target)?;
-                self.set_property(&r.object, &r.property, value);
-                Ok(())
+                self.write_property(&r.object, &r.property, value)
             }
             _ => Err(JsError::type_error("target is not assignable")),
         }
+    }
+
+    /// Assign a property, invoking a class-style setter (`__set_<name>`) when
+    /// one exists along the prototype chain.
+    fn write_property(&mut self, object: &ObjectRef, key: &str, value: Value) -> JsResult<()> {
+        let setter_key = format!("__set_{key}");
+        if let Some(setter) = Self::lookup_proto(object, &setter_key) {
+            self.call(setter, vec![value], Value::Object(object.clone()), false)?;
+            return Ok(());
+        }
+        self.set_property(object, key, value);
+        Ok(())
     }
 
     pub(crate) fn get_property(&self, object: &ObjectRef, property: &str) -> Value {
@@ -2074,6 +2304,15 @@ impl Interpreter {
                 self.env
                     .borrow_mut()
                     .define("this".into(), this_obj.clone(), true);
+                let super_value = func
+                    .borrow()
+                    .props
+                    .get("__super__")
+                    .cloned()
+                    .unwrap_or(Value::Undefined);
+                self.env
+                    .borrow_mut()
+                    .define("__super__".into(), super_value, false);
                 for (index, pattern) in params.iter().enumerate() {
                     if let Pattern::Rest(inner) = pattern {
                         let rest: Vec<Option<Value>> = args

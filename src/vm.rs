@@ -22,7 +22,7 @@
 //!   pushes a frame and switches the program counter into the body stream.
 
 use crate::ast::{BinaryOp, Pattern, UnaryOp};
-use crate::bytecode::{FunctionBytecode, Instruction, Program};
+use crate::bytecode::{ClassInfo, ClassMethodKind, FunctionBytecode, Instruction, Program};
 use crate::error::{JsError, JsResult};
 use crate::interpreter::{Env, Flow, Interpreter};
 use crate::value::{Internal, Object, ObjectRef, Value};
@@ -497,35 +497,25 @@ impl Vm {
             // --- Property access ---
             Instruction::GetMember(property) => {
                 let object = self.pop();
-                let value = self.native.get_property_on_value(&object, &property);
+                let value = self.get_member_value(&object, &property)?;
                 self.push(value);
             }
             Instruction::SetMember(property) => {
                 let object = self.pop();
                 let value = self.pop();
-                match object {
-                    Value::Object(o) => self.native.set_property(&o, &property, value),
-                    _ => {}
-                }
+                self.assign_member_value(object, &property, value)?;
             }
             Instruction::GetIndex => {
                 let index = self.pop();
                 let object = self.pop();
-                let value = self
-                    .native
-                    .get_property_on_value(&object, &index.to_string());
+                let value = self.get_member_value(&object, &index.to_string())?;
                 self.push(value);
             }
             Instruction::SetIndex => {
                 let index = self.pop();
                 let object = self.pop();
                 let value = self.pop();
-                match object {
-                    Value::Object(o) => {
-                        self.native.set_property(&o, &index.to_string(), value)
-                    }
-                    _ => {}
-                }
+                self.assign_member_value(object, &index.to_string(), value)?;
             }
             Instruction::DeleteMember(property) => {
                 let object = self.pop();
@@ -655,6 +645,11 @@ impl Vm {
             Instruction::PushFunction(index) => {
                 let value = self.make_function(index);
                 self.push(value);
+            }
+            Instruction::MakeClass(info) => {
+                let parent = self.pop();
+                let class = self.make_class(&info, parent);
+                self.push(class);
             }
 
             // --- Control flow ---
@@ -855,6 +850,14 @@ impl Vm {
                 };
                 env.borrow_mut().define("this".into(), this_obj.clone(), true);
                 self.env = env.clone();
+                let super_value = func
+                    .borrow()
+                    .props
+                    .get("__super__")
+                    .cloned()
+                    .unwrap_or(Value::Undefined);
+                env.borrow_mut()
+                    .define("__super__".into(), super_value, false);
                 for (index, pattern) in params.iter().enumerate() {
                     if let Pattern::Rest(inner) = pattern {
                         let rest: Vec<Option<Value>> = args
@@ -966,6 +969,80 @@ impl Vm {
         let key = Rc::as_ptr(&obj) as usize;
         self.closures.insert(key, (self.env.clone(), index + 1));
         value
+    }
+
+    /// Build a class object from [`ClassInfo`]. The parent value (or
+    /// `undefined`) establishes the prototype chain and enables `super`.
+    fn make_class(&mut self, info: &ClassInfo, parent: Value) -> Value {
+        let (params, func_index) = match info.constructor {
+            Some(index) => (self.program.functions[index].params.clone(), index + 1),
+            None => (Vec::new(), 0),
+        };
+        let obj = Object::with_internal(Internal::Function {
+            params,
+            body: Vec::new(),
+            func_index,
+            is_async: false,
+            generator: false,
+        });
+        obj.borrow_mut().proto = Some(self.native.function_proto.clone());
+        let proto_obj = Object::plain();
+        let parent_proto = match &parent {
+            Value::Object(p) => p.borrow().props.get("prototype").cloned(),
+            _ => None,
+        };
+        proto_obj.borrow_mut().proto = Some(match parent_proto {
+            Some(Value::Object(pp)) => pp,
+            _ => self.native.object_proto.clone(),
+        });
+        Interpreter::define_non_enumerable(&proto_obj, "constructor", Value::Object(obj.clone()));
+        Interpreter::define_non_enumerable(&obj, "prototype", Value::Object(proto_obj.clone()));
+        Interpreter::define_non_enumerable(&obj, "__super__", parent.clone());
+        if let Some(index) = info.constructor {
+            let key = Rc::as_ptr(&obj) as usize;
+            self.closures.insert(key, (self.env.clone(), index + 1));
+        }
+        for method in &info.methods {
+            let function = self.make_function(method.func);
+            Interpreter::tag_super(&function, &Some(parent.clone()));
+            let target = if method.is_static { &obj } else { &proto_obj };
+            let prop = match method.kind {
+                ClassMethodKind::Method => method.name.clone(),
+                ClassMethodKind::Getter => format!("__get_{}", method.name),
+                ClassMethodKind::Setter => format!("__set_{}", method.name),
+            };
+            Interpreter::define_non_enumerable(target, &prop, function);
+        }
+        Value::Object(obj)
+    }
+
+    /// Read a property value, invoking a class-style getter when present.
+    fn get_member_value(&mut self, object: &Value, property: &str) -> JsResult<Value> {
+        if let Value::Object(o) = object {
+            if let Some(getter) = Interpreter::lookup_proto(o, &format!("__get_{property}")) {
+                return self.call(getter, Vec::new(), object.clone(), false);
+            }
+        }
+        Ok(self.native.get_property_on_value(object, property))
+    }
+
+    /// Assign a property value, invoking a class-style setter when present.
+    fn assign_member_value(
+        &mut self,
+        object: Value,
+        property: &str,
+        value: Value,
+    ) -> JsResult<()> {
+        if let Value::Object(o) = &object {
+            if let Some(setter) = Interpreter::lookup_proto(o, &format!("__set_{property}")) {
+                self.call(setter, vec![value], object.clone(), false)?;
+                return Ok(());
+            }
+        }
+        if let Value::Object(o) = object {
+            self.native.set_property(&o, property, value);
+        }
+        Ok(())
     }
 
     // --- Property / coercion helpers ---

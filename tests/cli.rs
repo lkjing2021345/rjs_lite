@@ -1102,3 +1102,48 @@ fn vm_generator_does_not_crash() {
     let src = "function* g(){ yield 1; } var it = g(); var r = it.next(); print(r.done);";
     assert_eq!(run_cli(&["--vm", "-e", src]), "true");
 }
+
+// --- Class declarations / expressions ---
+
+#[test]
+fn class_with_constructor_sets_instance_field() {
+    let src = "class C { constructor(x){ this.x = x; } } let c = new C(5); c.x;";
+    assert_eq!(run_cli(&["-e", src]), "5");
+}
+
+#[test]
+fn class_with_method_runs() {
+    let src = "class C { m(){ return 1; } } new C().m();";
+    assert_eq!(run_cli(&["-e", src]), "1");
+}
+
+#[test]
+fn class_extends_super_calls_parent_constructor() {
+    let src = "class C { constructor(x){ this.x = x; } } \
+               class D extends C { constructor(){ super(1); } } new D().x;";
+    assert_eq!(run_cli(&["-e", src]), "1");
+}
+
+#[test]
+fn class_expression_runs() {
+    let src = "var E = class { f(){ return 2; } }; new E().f();";
+    assert_eq!(run_cli(&["-e", src]), "2");
+}
+
+#[test]
+fn class_static_method_and_getter_and_private_field() {
+    let src = "class C { static s(){ return 3; } get g(){ return this.x; } \
+               #p = 7; m(){ return this.#p; } } \
+               let c = new C(); c.x = 9; \
+               C.s() + c.g + c.m();";
+    assert_eq!(run_cli(&["-e", src]), "19");
+}
+
+#[test]
+fn vm_parity_class_constructor_and_method() {
+    let src = "class C { constructor(x){ this.x = x; } m(){ return this.x + 1; } } \
+               new C(5).m();";
+    let (i, v) = run_both(src);
+    assert_eq!(i, "6");
+    assert_eq!(v, "6");
+}
