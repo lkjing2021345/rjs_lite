@@ -72,6 +72,21 @@ impl Parser {
             Ok(Stmt::Block(self.block()?))
         } else {
             let e = self.expression()?;
+            // ASI rule (ES 12.9.1): a semicolon is inserted before an
+            // offending token only when it is separated from the previous
+            // token by at least one LineTerminator (or is `}`/EOF). If the
+            // next token sits on the same line and cannot continue the
+            // expression, no semicolon may be inserted and this is a
+            // SyntaxError (e.g. `{1 2} 3`, `x = 1 else`).
+            if !self.at(&TokenKind::Semicolon)
+                && !self.at(&TokenKind::RightBrace)
+                && !self.at(&TokenKind::Eof)
+                && self.current().span.line == self.previous_span().line
+            {
+                return Err(self.error(
+                    "missing semicolon before token on the same line",
+                ));
+            }
             self.optional_semicolon();
             Ok(Stmt::Expr(e))
         }
@@ -154,6 +169,12 @@ impl Parser {
     }
 
     fn throw_stmt(&mut self) -> JsResult<Stmt> {
+        // Restricted production: `throw [no LineTerminator here] Expression`.
+        // A line terminator after `throw` forces ASI, leaving `throw;` with a
+        // missing expression, which is a SyntaxError.
+        if self.current().span.line != self.previous_span().line {
+            return Err(self.error("no line terminator allowed after `throw`"));
+        }
         let value = self.expression()?;
         self.optional_semicolon();
         Ok(Stmt::Throw(value))
@@ -193,6 +214,20 @@ impl Parser {
         let condition = self.expression()?;
         self.expect(&TokenKind::RightParen)?;
         let then_branch = self.statement_as_block()?;
+        // ASI cannot insert a semicolon before `else` on the same line.
+        // `if (x) a else b` is a SyntaxError, while `if (x) a; else b` and
+        // `if (x) a\nelse b` are fine. A then-branch already terminated by a
+        // `;` or a closing `}` needs no inserted semicolon.
+        if self.at(&TokenKind::Else) {
+            let prev = self.previous_span();
+            let terminated = matches!(
+                self.tokens.get(self.pos.wrapping_sub(1)).map(|t| &t.kind),
+                Some(TokenKind::Semicolon) | Some(TokenKind::RightBrace)
+            );
+            if !terminated && self.current().span.line == prev.line {
+                return Err(self.error("unexpected `else` on the same line as if-body"));
+            }
+        }
         let else_branch = if self.eat(&TokenKind::Else) {
             self.statement_as_block()?
         } else {
@@ -790,7 +825,13 @@ impl Parser {
                     object: Box::new(expr),
                     property,
                 };
-            } else if self.eat(&TokenKind::PlusPlus) {
+            } else if self.at(&TokenKind::PlusPlus)
+                && self.current().span.line == self.previous_span().line
+            {
+                // Restricted production: the postfix operator must be on the
+                // same line as its operand. Across a line break ASI fires and
+                // the `++` starts a new statement instead.
+                self.pos += 1;
                 if Self::is_assignable(&expr) {
                     expr = Expr::Update {
                         target: Box::new(expr),
@@ -800,7 +841,10 @@ impl Parser {
                 } else {
                     return Err(self.error("increment target must be assignable"));
                 }
-            } else if self.eat(&TokenKind::MinusMinus) {
+            } else if self.at(&TokenKind::MinusMinus)
+                && self.current().span.line == self.previous_span().line
+            {
+                self.pos += 1;
                 if Self::is_assignable(&expr) {
                     expr = Expr::Update {
                         target: Box::new(expr),
@@ -1072,6 +1116,16 @@ impl Parser {
         self.eat(&TokenKind::Semicolon);
     }
 
+    /// Span of the most recently consumed token (the token just before the
+    /// cursor). Used by ASI decisions that compare line numbers.
+    fn previous_span(&self) -> Span {
+        if self.pos == 0 {
+            self.current().span
+        } else {
+            self.tokens[self.pos - 1].span
+        }
+    }
+
     fn at_statement_end_after(&self, previous_span: Span) -> bool {
         self.at(&TokenKind::Semicolon)
             || self.at(&TokenKind::RightBrace)
@@ -1199,5 +1253,45 @@ mod tests {
     fn allows_strict_top_level_and_block_function_decls() {
         assert!(parse(lex("\"use strict\"; function g() {}").unwrap()).is_ok());
         assert!(parse(lex("\"use strict\"; if (true) { function g() {} }").unwrap()).is_ok());
+    }
+
+    // --- ASI edge cases (test262 negative phase: parse) ---
+
+    #[test]
+    fn rejects_same_line_expression_statements() {
+        // `{1 2} 3` — ASI cannot insert a semicolon between `1` and `2`.
+        assert!(parse(lex("{1 2} 3").unwrap()).is_err());
+        assert!(parse(lex("{ 1 2 } 3").unwrap()).is_err());
+        // Valid: statements separated by a line terminator or `;`.
+        assert!(parse(lex("{1; 2} 3").unwrap()).is_ok());
+        assert!(parse(lex("{1\n2} 3").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn rejects_else_on_same_line_as_if_body() {
+        assert!(parse(lex("if (false) x = 1 else x = -1").unwrap()).is_err());
+        // Valid: a terminating `;`, a block, or a line terminator.
+        assert!(parse(lex("if (false) x = 1; else x = -1").unwrap()).is_ok());
+        assert!(parse(lex("if (false) { x = 1 } else { x = -1 }").unwrap()).is_ok());
+        assert!(parse(lex("if (false) x = 1\nelse x = -1").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn rejects_line_terminator_after_throw() {
+        assert!(parse(lex("throw\n1;").unwrap()).is_err());
+        // Valid: the expression starts on the same line.
+        assert!(parse(lex("throw 1;").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn rejects_postfix_update_across_line_terminator() {
+        assert!(parse(lex("x\n++;").unwrap()).is_err());
+        assert!(parse(lex("x\n--;").unwrap()).is_err());
+        // Valid: same line.
+        assert!(parse(lex("x++;").unwrap()).is_ok());
+        assert!(parse(lex("x--;").unwrap()).is_ok());
+        // Valid ASI: `x; ++y;` and `x; --y;`.
+        assert!(parse(lex("x\n++y").unwrap()).is_ok());
+        assert!(parse(lex("x\n--y").unwrap()).is_ok());
     }
 }
