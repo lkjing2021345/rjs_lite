@@ -1100,6 +1100,19 @@ impl Parser {
                 if self.eat(&TokenKind::Colon) {
                     let value = self.expression()?;
                     props.push((key, value));
+                } else if self.at(&TokenKind::LeftParen) {
+                    // Method definition: `key(params) { body }`
+                    self.advance(); // consume `(`
+                    let params = self.params()?;
+                    self.expect(&TokenKind::LeftBrace)?;
+                    let body = self.block()?;
+                    let k = key.clone().unwrap_or_default();
+                    let value = Expr::Function {
+                        name: Some(k),
+                        params,
+                        body,
+                    };
+                    props.push((key, value));
                 } else {
                     let k = key.clone().unwrap_or_default();
                     let value = Expr::Identifier(k);
