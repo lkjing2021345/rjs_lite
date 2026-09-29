@@ -25,6 +25,10 @@ pub struct Object {
     pub non_enumerable_props: HashSet<String>,
     pub proto: Option<ObjectRef>,
     pub internal: Internal,
+    /// True for the `arguments` object of a strict-mode call. Its `callee`
+    /// property is a poison-pill accessor: reading or assigning it throws a
+    /// TypeError instead of exposing the enclosing function.
+    pub is_strict_arguments: bool,
 }
 
 pub type ArraySlot = Option<Value>;
@@ -57,6 +61,7 @@ impl Object {
             non_enumerable_props: HashSet::new(),
             proto: None,
             internal: Internal::Plain,
+            is_strict_arguments: false,
         }))
     }
 
@@ -66,6 +71,7 @@ impl Object {
             non_enumerable_props: HashSet::new(),
             proto: None,
             internal,
+            is_strict_arguments: false,
         }))
     }
 

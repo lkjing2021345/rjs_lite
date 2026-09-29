@@ -1446,12 +1446,14 @@ impl Interpreter {
         match expr {
             Expr::Member { object, property } => {
                 let object_value = self.eval_expr(object)?;
+                self.deny_strict_arguments_callee_value(&object_value, property)?;
                 let method = self.get_property_on_value(&object_value, property);
                 Ok((method, object_value))
             }
             Expr::Index { object, index } => {
                 let object_value = self.eval_expr(object)?;
                 let key = self.eval_expr(index)?.to_string();
+                self.deny_strict_arguments_callee_value(&object_value, &key)?;
                 let method = self.get_property_on_value(&object_value, &key);
                 Ok((method, object_value))
             }
@@ -1471,6 +1473,7 @@ impl Interpreter {
             Expr::Member { object, property } => {
                 let object = self.eval_expr(object)?;
                 if let Value::Object(o) = object {
+                    self.deny_strict_arguments_callee(&o, property)?;
                     Ok(RefTarget {
                         object: o,
                         property: property.clone(),
@@ -1483,6 +1486,7 @@ impl Interpreter {
                 let object = self.eval_expr(object)?;
                 let property = self.eval_expr(index)?.to_string();
                 if let Value::Object(o) = object {
+                    self.deny_strict_arguments_callee(&o, &property)?;
                     Ok(RefTarget {
                         object: o,
                         property,
@@ -1504,11 +1508,13 @@ impl Interpreter {
                 .ok_or_else(|| JsError::reference_error(format!("{name} is not defined"))),
             Expr::Member { object, property } => {
                 let obj = self.eval_expr(object)?;
+                self.deny_strict_arguments_callee_value(&obj, property)?;
                 Ok(self.get_property_on_value(&obj, property))
             }
             Expr::Index { object, index } => {
                 let obj = self.eval_expr(object)?;
                 let key = self.eval_expr(index)?.to_string();
+                self.deny_strict_arguments_callee_value(&obj, &key)?;
                 Ok(self.get_property_on_value(&obj, &key))
             }
             _ => self.eval_expr(target),
@@ -1564,6 +1570,26 @@ impl Interpreter {
             Value::Object(o) => self.get_property(o, property),
             _ => Value::Undefined,
         }
+    }
+
+    /// A strict-mode `arguments` object exposes `callee` as a poison-pill
+    /// accessor: any read or write throws a TypeError rather than exposing
+    /// the enclosing function. Reject such access for an extracted object.
+    fn deny_strict_arguments_callee(&self, object: &ObjectRef, property: &str) -> JsResult<()> {
+        if property == "callee" && object.borrow().is_strict_arguments {
+            return Err(JsError::type_error(
+                "'callee' is not allowed in strict mode",
+            ));
+        }
+        Ok(())
+    }
+
+    /// [`deny_strict_arguments_callee`] for call sites that only hold a value.
+    fn deny_strict_arguments_callee_value(&self, value: &Value, property: &str) -> JsResult<()> {
+        if let Value::Object(object) = value {
+            self.deny_strict_arguments_callee(object, property)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn set_property(&self, object: &ObjectRef, property: &str, value: Value) {
@@ -1804,7 +1830,11 @@ impl Interpreter {
                     let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
                     let args_obj = Object::with_internal(Internal::Array(slots));
                     args_obj.borrow_mut().proto = Some(self.object_proto.clone());
-                    if !self.strict {
+                    if self.strict {
+                        // Strict-mode `arguments.callee` is a poison-pill
+                        // accessor: any read or write throws a TypeError.
+                        args_obj.borrow_mut().is_strict_arguments = true;
+                    } else {
                         Interpreter::define_non_enumerable(
                             &args_obj,
                             "callee",
@@ -3929,6 +3959,52 @@ mod tests {
         assert_eq!(
             run_source("function f(a,b){ return typeof b; } f(1);").unwrap(),
             Value::String("undefined".into())
+        );
+    }
+
+    #[test]
+    fn strict_mode_arguments_callee_access_throws_type_error() {
+        let err = run_source("\"use strict\"; (function(){ return arguments.callee; })();")
+            .unwrap_err();
+        assert!(
+            err.to_string().starts_with("TypeError"),
+            "expected TypeError, got: {err}"
+        );
+    }
+
+    #[test]
+    fn strict_mode_arguments_callee_call_throws_type_error() {
+        let err = run_source("\"use strict\"; (function(){ return arguments.callee(); })();")
+            .unwrap_err();
+        assert!(
+            err.to_string().starts_with("TypeError"),
+            "expected TypeError, got: {err}"
+        );
+    }
+
+    #[test]
+    fn strict_mode_arguments_callee_assignment_throws_type_error() {
+        let err = run_source("\"use strict\"; (function(){ arguments.callee = 1; })();")
+            .unwrap_err();
+        assert!(
+            err.to_string().starts_with("TypeError"),
+            "expected TypeError, got: {err}"
+        );
+    }
+
+    #[test]
+    fn non_strict_arguments_callee_returns_enclosing_function() {
+        assert_eq!(
+            run_source("function f(){ return typeof arguments.callee; } f();").unwrap(),
+            Value::String("function".into())
+        );
+    }
+
+    #[test]
+    fn non_strict_arguments_callee_is_the_enclosing_function() {
+        assert_eq!(
+            run_source("function f(){ return arguments.callee === f; } f();").unwrap(),
+            Value::Bool(true)
         );
     }
 
