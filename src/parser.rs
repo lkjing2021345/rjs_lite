@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Program, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, ObjectPatternEntry, Pattern, Program, Stmt, UnaryOp};
 use crate::error::{JsError, JsResult, Span};
 use crate::token::{Token, TokenKind};
 
@@ -59,7 +59,7 @@ impl Parser {
     fn var_decl(&mut self, mutable: bool) -> JsResult<Stmt> {
         let mut declarations = Vec::new();
         loop {
-            let (name, _name_span) = self.identifier_token()?;
+            let name = self.pattern()?;
             let value = if self.eat(&TokenKind::Assign) {
                 self.expression()?
             } else if mutable {
@@ -201,12 +201,15 @@ impl Parser {
             Some(Box::new(Stmt::Expr(expr)))
         };
         if let Some(init) = &init {
-            if let Stmt::VarDecl { name, value, .. } = init.as_ref() {
+            if let Stmt::VarDecl { name, .. } = init.as_ref() {
                 if self.eat(&TokenKind::In) {
+                    let Pattern::Identifier(ident) = name else {
+                        return Err(self.error("for-in binding must be an identifier"));
+                    };
                     let right = self.expression()?;
                     self.expect(&TokenKind::RightParen)?;
                     return Ok(Stmt::ForIn {
-                        left: Box::new(Expr::Identifier(name.clone())),
+                        left: Box::new(Expr::Identifier(ident.clone())),
                         right,
                         body: self.statement_as_block()?,
                     });
@@ -214,10 +217,13 @@ impl Parser {
             }
             if let Stmt::VarDecls { declarations, .. } = init.as_ref() {
                 if declarations.len() == 1 && self.eat(&TokenKind::In) {
+                    let Pattern::Identifier(ident) = &declarations[0].0 else {
+                        return Err(self.error("for-in binding must be an identifier"));
+                    };
                     let right = self.expression()?;
                     self.expect(&TokenKind::RightParen)?;
                     return Ok(Stmt::ForIn {
-                        left: Box::new(Expr::Identifier(declarations[0].0.clone())),
+                        left: Box::new(Expr::Identifier(ident.clone())),
                         right,
                         body: self.statement_as_block()?,
                     });
@@ -303,24 +309,132 @@ impl Parser {
         Ok(stmts)
     }
 
-    fn params(&mut self) -> JsResult<Vec<String>> {
+    fn params(&mut self) -> JsResult<Vec<Pattern>> {
         let mut params = Vec::new();
         if self.eat(&TokenKind::RightParen) {
             return Ok(params);
         }
         loop {
-            if self.eat(&TokenKind::DotDotDot) {
-                params.push(format!("...{}", self.identifier()?));
+            let is_rest = self.at(&TokenKind::DotDotDot);
+            params.push(self.param_pattern()?);
+            if is_rest {
+                // A rest parameter must be the final parameter.
                 self.expect(&TokenKind::RightParen)?;
                 return Ok(params);
             }
-            params.push(self.identifier()?);
             if self.eat(&TokenKind::RightParen) {
                 break;
             }
             self.expect(&TokenKind::Comma)?;
         }
         Ok(params)
+    }
+
+    /// Parse a single function parameter binding, including `...rest` and
+    /// `pattern = default` forms.
+    fn param_pattern(&mut self) -> JsResult<Pattern> {
+        if self.eat(&TokenKind::DotDotDot) {
+            let inner = self.pattern()?;
+            return Ok(Pattern::Rest(Box::new(inner)));
+        }
+        let mut pattern = self.pattern()?;
+        if self.eat(&TokenKind::Assign) {
+            let default = self.assignment()?;
+            pattern = Pattern::Default(Box::new(pattern), default);
+        }
+        Ok(pattern)
+    }
+
+    /// Parse a binding target: an identifier, `[...]` array pattern, or `{...}`
+    /// object pattern.
+    fn pattern(&mut self) -> JsResult<Pattern> {
+        if self.eat(&TokenKind::LeftBracket) {
+            self.array_pattern()
+        } else if self.eat(&TokenKind::LeftBrace) {
+            self.object_pattern()
+        } else {
+            Ok(Pattern::Identifier(self.identifier()?))
+        }
+    }
+
+    fn array_pattern(&mut self) -> JsResult<Pattern> {
+        let mut elements = Vec::new();
+        loop {
+            if self.eat(&TokenKind::RightBracket) {
+                break;
+            }
+            if self.eat(&TokenKind::DotDotDot) {
+                let inner = self.pattern()?;
+                elements.push(Pattern::Rest(Box::new(inner)));
+                // Rest must be the final element.
+                self.eat(&TokenKind::Comma);
+                self.expect(&TokenKind::RightBracket)?;
+                break;
+            }
+            let mut element = self.pattern()?;
+            if self.eat(&TokenKind::Assign) {
+                let default = self.assignment()?;
+                element = Pattern::Default(Box::new(element), default);
+            }
+            elements.push(element);
+            if self.eat(&TokenKind::RightBracket) {
+                break;
+            }
+            self.expect(&TokenKind::Comma)?;
+            if self.eat(&TokenKind::RightBracket) {
+                break;
+            }
+        }
+        Ok(Pattern::ArrayPattern(elements))
+    }
+
+    fn object_pattern(&mut self) -> JsResult<Pattern> {
+        let mut entries = Vec::new();
+        loop {
+            if self.eat(&TokenKind::RightBrace) {
+                break;
+            }
+            if self.eat(&TokenKind::DotDotDot) {
+                // Object rest: `{ a, ...rest }` is stored as a `"..."` entry.
+                let inner = self.pattern()?;
+                entries.push(ObjectPatternEntry {
+                    key: "...".to_string(),
+                    value: Pattern::Rest(Box::new(inner)),
+                });
+                self.eat(&TokenKind::Comma);
+                self.expect(&TokenKind::RightBrace)?;
+                break;
+            }
+            let key = match self.advance().clone().kind {
+                TokenKind::Identifier(s) | TokenKind::String(s) => s,
+                TokenKind::Number(n) => n.to_string(),
+                _ => return Err(self.error("expected object pattern property name")),
+            };
+            let value = if self.eat(&TokenKind::Colon) {
+                let mut pattern = self.pattern()?;
+                if self.eat(&TokenKind::Assign) {
+                    let default = self.assignment()?;
+                    pattern = Pattern::Default(Box::new(pattern), default);
+                }
+                pattern
+            } else {
+                let mut pattern = Pattern::Identifier(key.clone());
+                if self.eat(&TokenKind::Assign) {
+                    let default = self.assignment()?;
+                    pattern = Pattern::Default(Box::new(pattern), default);
+                }
+                pattern
+            };
+            entries.push(ObjectPatternEntry { key, value });
+            if self.eat(&TokenKind::RightBrace) {
+                break;
+            }
+            self.expect(&TokenKind::Comma)?;
+            if self.eat(&TokenKind::RightBrace) {
+                break;
+            }
+        }
+        Ok(Pattern::ObjectPattern(entries))
     }
 
     fn expression(&mut self) -> JsResult<Expr> {
@@ -331,7 +445,7 @@ impl Parser {
         let expr = self.conditional()?;
         if self.eat(&TokenKind::Arrow) {
             let params = match expr {
-                Expr::Identifier(name) => vec![name],
+                Expr::Identifier(name) => vec![Pattern::Identifier(name)],
                 _ => return Err(self.error("arrow function params must be identifier")),
             };
             return self.arrow_body(params);
@@ -682,22 +796,17 @@ impl Parser {
             return self.arrow_body(Vec::new());
         }
         let mut params = Vec::new();
-        params.push(self.identifier()?);
-        if self.eat(&TokenKind::RightParen) {
-            self.expect(&TokenKind::Arrow)?;
-            return self.arrow_body(params);
-        }
         loop {
-            self.expect(&TokenKind::Comma)?;
-            params.push(self.identifier()?);
+            params.push(self.param_pattern()?);
             if self.eat(&TokenKind::RightParen) {
                 self.expect(&TokenKind::Arrow)?;
                 return self.arrow_body(params);
             }
+            self.expect(&TokenKind::Comma)?;
         }
     }
 
-    fn arrow_body(&mut self, params: Vec<String>) -> JsResult<Expr> {
+    fn arrow_body(&mut self, params: Vec<Pattern>) -> JsResult<Expr> {
         let body = if self.eat(&TokenKind::LeftBrace) {
             self.block()?
         } else {

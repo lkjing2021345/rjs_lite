@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Program, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Pattern, Program, Stmt, UnaryOp};
 use crate::error::{JsError, JsResult};
 use crate::value::{Internal, Object, ObjectRef, Value};
 use std::cell::RefCell;
@@ -872,12 +872,7 @@ impl Interpreter {
                 mutable,
             } => {
                 let value = self.eval_expr(value)?;
-                self.env
-                    .borrow_mut()
-                    .define(name.clone(), value.clone(), *mutable);
-                if self.env.borrow().parent.is_none() {
-                    self.global.borrow_mut().props.insert(name.clone(), value);
-                }
+                self.bind_pattern(name, value, *mutable)?;
                 Ok(Flow::Value(Value::Undefined))
             }
             Stmt::VarDecls {
@@ -886,12 +881,7 @@ impl Interpreter {
             } => {
                 for (name, expr) in declarations {
                     let value = self.eval_expr(expr)?;
-                    self.env
-                        .borrow_mut()
-                        .define(name.clone(), value.clone(), *mutable);
-                    if self.env.borrow().parent.is_none() {
-                        self.global.borrow_mut().props.insert(name.clone(), value);
-                    }
+                    self.bind_pattern(name, value, *mutable)?;
                 }
                 Ok(Flow::Value(Value::Undefined))
             }
@@ -1092,7 +1082,7 @@ impl Interpreter {
         result
     }
 
-    fn make_function(&mut self, params: Vec<String>, body: Vec<Stmt>) -> Value {
+    fn make_function(&mut self, params: Vec<Pattern>, body: Vec<Stmt>) -> Value {
         let obj = Object::with_internal(Internal::Function { params, body, func_index: 0 });
         obj.borrow_mut().proto = Some(self.function_proto.clone());
         let proto = Object::plain();
@@ -1109,6 +1099,133 @@ impl Interpreter {
             self.closures
                 .insert(Rc::as_ptr(obj) as usize, self.env.clone());
         }
+    }
+
+    /// Bind `value` against a destructuring `pattern`, defining each leaf
+    /// identifier in the current environment. Used by variable declarations
+    /// and function parameter binding.
+    pub(crate) fn bind_pattern(
+        &mut self,
+        pattern: &Pattern,
+        value: Value,
+        mutable: bool,
+    ) -> JsResult<()> {
+        match pattern {
+            Pattern::Identifier(name) => {
+                self.env
+                    .borrow_mut()
+                    .define(name.clone(), value.clone(), mutable);
+                if self.env.borrow().parent.is_none() {
+                    self.global.borrow_mut().props.insert(name.clone(), value);
+                }
+                Ok(())
+            }
+            Pattern::Default(inner, default) => {
+                let value = if matches!(value, Value::Undefined) {
+                    self.eval_expr(default)?
+                } else {
+                    value
+                };
+                self.bind_pattern(inner, value, mutable)
+            }
+            // A bare `Rest` only appears inside a container; binding it
+            // directly treats the incoming value as a single element.
+            Pattern::Rest(inner) => self.bind_pattern(inner, value, mutable),
+            Pattern::ArrayPattern(elements) => {
+                let mut index = 0usize;
+                for element in elements {
+                    if let Pattern::Rest(inner) = element {
+                        let rest = self.collect_rest_array(&value, index);
+                        self.bind_pattern(inner, rest, mutable)?;
+                        break;
+                    }
+                    let item = self.element_at(&value, index);
+                    self.bind_pattern(element, item, mutable)?;
+                    index += 1;
+                }
+                Ok(())
+            }
+            Pattern::ObjectPattern(entries) => {
+                let mut consumed: Vec<String> = Vec::new();
+                for entry in entries {
+                    if entry.key == "..." {
+                        if let Pattern::Rest(inner) = &entry.value {
+                            let rest = self.collect_object_rest(&value, &consumed);
+                            self.bind_pattern(inner, rest, mutable)?;
+                        }
+                        continue;
+                    }
+                    consumed.push(entry.key.clone());
+                    let item = self.get_property_on_value(&value, &entry.key);
+                    self.bind_pattern(&entry.value, item, mutable)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Length used for array destructuring: character count for strings,
+    /// otherwise the value's `length` property.
+    fn value_length(&self, value: &Value) -> usize {
+        if let Value::String(s) = value {
+            return s.chars().count();
+        }
+        let n = self.get_property_on_value(value, "length").to_number();
+        if n.is_finite() && n > 0.0 {
+            n as usize
+        } else {
+            0
+        }
+    }
+
+    /// Extract element `index` for array destructuring.
+    fn element_at(&self, value: &Value, index: usize) -> Value {
+        if let Value::String(s) = value {
+            return s
+                .chars()
+                .nth(index)
+                .map(|c| Value::String(c.to_string()))
+                .unwrap_or(Value::Undefined);
+        }
+        self.get_property_on_value(value, &index.to_string())
+    }
+
+    /// Collect the remaining elements of an array-like value into a new array.
+    fn collect_rest_array(&self, value: &Value, start: usize) -> Value {
+        let length = self.value_length(value);
+        let mut items = Vec::new();
+        for i in start..length {
+            items.push(Some(self.element_at(value, i)));
+        }
+        let arr = Object::with_internal(Internal::Array(items));
+        arr.borrow_mut().proto = Some(self.array_proto.clone());
+        Value::Object(arr)
+    }
+
+    /// Collect the not-yet-consumed own enumerable properties into a new
+    /// plain object (object rest).
+    fn collect_object_rest(&self, value: &Value, consumed: &[String]) -> Value {
+        let result = Object::plain();
+        result.borrow_mut().proto = Some(self.object_proto.clone());
+        if let Value::Object(source) = value {
+            let source = source.borrow();
+            for (key, val) in &source.props {
+                if !consumed.contains(key) && !source.non_enumerable_props.contains(key) {
+                    result.borrow_mut().props.insert(key.clone(), val.clone());
+                }
+            }
+            if let Internal::Array(items) = &source.internal {
+                for (i, item) in items.iter().enumerate() {
+                    let key = i.to_string();
+                    if !consumed.contains(&key)
+                        && let Some(val) = item
+                    {
+                        result.borrow_mut().props.insert(key, val.clone());
+                    }
+                }
+            }
+        }
+        Value::Object(result)
     }
 
     fn eval_expr(&mut self, expr: &Expr) -> JsResult<Value> {
@@ -1651,19 +1768,20 @@ impl Interpreter {
                 self.env
                     .borrow_mut()
                     .define("this".into(), this_obj.clone(), true);
-                for (index, name) in params.into_iter().enumerate() {
-                    if name.starts_with("...") {
-                        let rest_name = name[3..].to_string();
-                        let rest: Vec<Option<Value>> = args.iter().skip(index)
+                for (index, pattern) in params.iter().enumerate() {
+                    if let Pattern::Rest(inner) = pattern {
+                        let rest: Vec<Option<Value>> = args
+                            .iter()
+                            .skip(index)
                             .map(|v| Some(v.clone()))
                             .collect();
                         let arr = Object::with_internal(Internal::Array(rest));
                         arr.borrow_mut().proto = Some(self.array_proto.clone());
-                        self.env.borrow_mut().define(rest_name, Value::Object(arr), true);
+                        self.bind_pattern(inner, Value::Object(arr), true)?;
                         break;
                     }
                     let value = args.get(index).cloned().unwrap_or(Value::Undefined);
-                    self.env.borrow_mut().define(name, value, true);
+                    self.bind_pattern(pattern, value, true)?;
                 }
                 // Build the `arguments` object for non-constructor calls.
                 if !construct {

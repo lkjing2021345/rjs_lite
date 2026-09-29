@@ -13,7 +13,7 @@
 //! - `FunctionBytecode` is a separate instruction stream per function, so the
 //!   VM can jump into a function body by switching streams.
 
-use crate::ast::{BinaryOp, UnaryOp};
+use crate::ast::{BinaryOp, Pattern, UnaryOp};
 
 /// A value stored in the constant pool. The compiler interns literals and
 /// identifier names here; instructions reference them by index.
@@ -49,6 +49,8 @@ pub enum Instruction {
     GetLocal(String),
     SetLocal(String),
     DefineLocal(String, bool),
+    /// Pop a value and bind it against a destructuring pattern.
+    DestructureDefine(Pattern, bool),
 
     // --- Property access ---
     GetMember(String),
@@ -117,7 +119,7 @@ pub enum Instruction {
 /// arrow functions).
 #[derive(Debug, Clone)]
 pub struct FunctionBytecode {
-    pub params: Vec<String>,
+    pub params: Vec<Pattern>,
     pub instructions: Vec<Instruction>,
 }
 

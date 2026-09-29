@@ -1,4 +1,4 @@
-use crate::ast::Stmt;
+use crate::ast::{Pattern, Stmt};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -30,7 +30,7 @@ pub enum Internal {
     Plain,
     Array(Vec<ArraySlot>),
     Function {
-        params: Vec<String>,
+        params: Vec<Pattern>,
         body: Vec<Stmt>,
         /// Bytecode function index (1-based, matches `program.functions` offset).
         /// Set by the VM's `make_function`; 0 means "not yet compiled".
@@ -78,7 +78,7 @@ impl Object {
 
 #[derive(Clone)]
 pub struct Function {
-    pub params: Vec<String>,
+    pub params: Vec<Pattern>,
     pub body: Vec<Stmt>,
 }
 
@@ -89,7 +89,7 @@ impl Value {
         )))
     }
 
-    pub fn function(params: Vec<String>, body: Vec<Stmt>) -> Value {
+    pub fn function(params: Vec<Pattern>, body: Vec<Stmt>) -> Value {
         Value::Object(Object::with_internal(Internal::Function { params, body, func_index: 0 }))
     }
 

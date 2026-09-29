@@ -21,7 +21,7 @@
 //! - Function bodies are separate instruction streams; entering a call
 //!   pushes a frame and switches the program counter into the body stream.
 
-use crate::ast::{BinaryOp, UnaryOp};
+use crate::ast::{BinaryOp, Pattern, UnaryOp};
 use crate::bytecode::{FunctionBytecode, Instruction, Program};
 use crate::error::{JsError, JsResult};
 use crate::interpreter::{Env, Flow, Interpreter};
@@ -488,6 +488,10 @@ impl Vm {
                 let value = self.pop();
                 self.env.borrow_mut().define(name, value, mutable);
             }
+            Instruction::DestructureDefine(pattern, mutable) => {
+                let value = self.pop();
+                self.bind_pattern(&pattern, value, mutable)?;
+            }
 
             // --- Property access ---
             Instruction::GetMember(property) => {
@@ -837,9 +841,9 @@ impl Vm {
                     this_value
                 };
                 env.borrow_mut().define("this".into(), this_obj.clone(), true);
-                for (index, name) in params.into_iter().enumerate() {
-                    if name.starts_with("...") {
-                        let rest_name = name[3..].to_string();
+                self.env = env.clone();
+                for (index, pattern) in params.iter().enumerate() {
+                    if let Pattern::Rest(inner) = pattern {
                         let rest: Vec<Option<Value>> = args
                             .iter()
                             .skip(index)
@@ -847,11 +851,11 @@ impl Vm {
                             .collect();
                         let arr = Object::with_internal(Internal::Array(rest));
                         arr.borrow_mut().proto = Some(self.native.array_proto.clone());
-                        env.borrow_mut().define(rest_name, Value::Object(arr), true);
+                        self.bind_pattern(inner, Value::Object(arr), true)?;
                         break;
                     }
                     let value = args.get(index).cloned().unwrap_or(Value::Undefined);
-                    env.borrow_mut().define(name, value, true);
+                    self.bind_pattern(pattern, value, true)?;
                 }
                 // Build the `arguments` object for non-constructor calls.
                 if !construct {
@@ -901,6 +905,16 @@ impl Vm {
                 "object is not a function".into(),
             )))),
         }
+    }
+
+    /// Bind a destructuring pattern into the VM's current environment by
+    /// delegating to the interpreter's pattern binder (which also evaluates
+    /// any default-value expressions).
+    fn bind_pattern(&mut self, pattern: &Pattern, value: Value, mutable: bool) -> JsResult<()> {
+        let saved = std::mem::replace(&mut self.native.env, self.env.clone());
+        let result = self.native.bind_pattern(pattern, value, mutable);
+        self.native.env = saved;
+        result
     }
 
     fn make_function(&mut self, index: usize) -> Value {
@@ -1322,6 +1336,38 @@ mod tests {
     fn vm_rest_params() {
         let src = "function f(a, ...rest) { return rest.length; } f(1, 2, 3);";
         assert_eq!(run(src), Value::Number(2.0));
+    }
+
+    #[test]
+    fn vm_destructures_array_and_object() {
+        assert_eq!(run("let [a, b] = [1, 2]; a + b;"), Value::Number(3.0));
+        assert_eq!(run("let {a, b} = {a: 1, b: 2}; a + b;"), Value::Number(3.0));
+        assert_eq!(
+            run("let {a: x, b} = {a: 1, b: 2}; x + b;"),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn vm_destructures_array_rest_and_defaults() {
+        assert_eq!(
+            run("let [a, ...rest] = [1, 2, 3]; a + rest.length;"),
+            Value::Number(3.0)
+        );
+        assert_eq!(run("let [a = 10] = []; a;"), Value::Number(10.0));
+        assert_eq!(run("let [a = 10] = [1]; a;"), Value::Number(1.0));
+    }
+
+    #[test]
+    fn vm_destructures_function_params() {
+        assert_eq!(
+            run("function foo([a, b]) { return a + b; } foo([3, 4]);"),
+            Value::Number(7.0)
+        );
+        assert_eq!(
+            run("function f({a, b}) { return a + b; } f({a: 5, b: 6});"),
+            Value::Number(11.0)
+        );
     }
 
     #[test]

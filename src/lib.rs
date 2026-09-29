@@ -254,4 +254,76 @@ mod tests {
         assert_eq!(output, vec!["1".to_string(), "2".to_string()]);
         assert!(!output_truncated);
     }
+
+    #[test]
+    fn destructures_array_with_let() {
+        assert_eq!(
+            run_source("let [a, b] = [1, 2]; a + b;").unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn destructures_object_with_let() {
+        assert_eq!(
+            run_source("let {a, b} = {a: 1, b: 2}; a + b;").unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn destructures_array_rest() {
+        assert_eq!(
+            run_source("let [a, ...rest] = [1, 2, 3]; a + rest.length;").unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn destructures_object_renaming() {
+        assert_eq!(
+            run_source("let {a: x, b} = {a: 1, b: 2}; x + b;").unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn destructures_function_params() {
+        assert_eq!(
+            run_source("function foo([a, b]) { return a + b; } foo([3, 4]);").unwrap(),
+            Value::Number(7.0)
+        );
+    }
+
+    #[test]
+    fn destructures_array_defaults() {
+        assert_eq!(
+            run_source("let [a = 10] = [1]; a;").unwrap(),
+            Value::Number(1.0)
+        );
+        assert_eq!(
+            run_source("let [a = 10] = []; a;").unwrap(),
+            Value::Number(10.0)
+        );
+    }
+
+    #[test]
+    fn destructures_nested_patterns() {
+        assert_eq!(
+            run_source("let [[a], {b}] = [[1], {b: 2}]; a + b;").unwrap(),
+            Value::Number(3.0)
+        );
+        assert_eq!(
+            run_source("function f({a, b: y}) { return a + y; } f({a: 1, b: 2});").unwrap(),
+            Value::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn destructures_declaration_lists() {
+        assert_eq!(
+            run_source("let [a, b] = [1, 2], c = 3; a + b + c;").unwrap(),
+            Value::Number(6.0)
+        );
+    }
 }

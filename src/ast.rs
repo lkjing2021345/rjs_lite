@@ -3,20 +3,42 @@ pub struct Program {
     pub statements: Vec<Stmt>,
 }
 
+/// A binding pattern used by variable declarations and function parameters.
+///
+/// `Identifier` is the common case. The container variants hold nested
+/// patterns; `Rest` captures the remaining elements/values; `Default` falls
+/// back to an expression when the extracted value is `undefined`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Identifier(String),
+    ArrayPattern(Vec<Pattern>),
+    ObjectPattern(Vec<ObjectPatternEntry>),
+    Rest(Box<Pattern>),
+    Default(Box<Pattern>, Expr),
+}
+
+/// One `key: pattern` entry of an object destructuring pattern. The shorthand
+/// form `{ a }` is stored as key `"a"` with an `Identifier("a")` value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectPatternEntry {
+    pub key: String,
+    pub value: Pattern,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     VarDecl {
-        name: String,
+        name: Pattern,
         value: Expr,
         mutable: bool,
     },
     VarDecls {
-        declarations: Vec<(String, Expr)>,
+        declarations: Vec<(Pattern, Expr)>,
         mutable: bool,
     },
     FunctionDecl {
         name: String,
-        params: Vec<String>,
+        params: Vec<Pattern>,
         body: Vec<Stmt>,
     },
     Return(Option<Expr>),
@@ -70,11 +92,11 @@ pub enum Expr {
     Array(Vec<Expr>),
     Object(Vec<(String, Expr)>),
     Function {
-        params: Vec<String>,
+        params: Vec<Pattern>,
         body: Vec<Stmt>,
     },
     ArrowFunction {
-        params: Vec<String>,
+        params: Vec<Pattern>,
         body: Vec<Stmt>,
     },
     TemplateLiteral {

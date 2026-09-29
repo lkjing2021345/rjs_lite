@@ -10,7 +10,7 @@
 //! - `SetMember`/`SetIndex`/`SetLocal` expect `[value, object, (key)]`.
 //! - `GetMember`/`GetIndex` expect `[object, (key)]` and leave the value on top.
 
-use crate::ast::{BinaryOp, Expr, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Pattern, Stmt, UnaryOp};
 use crate::bytecode::{FunctionBytecode, Instruction, Program};
 
 /// Context for `break` / `continue` while compiling a function body.
@@ -77,7 +77,7 @@ impl<'a> Compiler<'a> {
 
     /// Compile a function body into a new `FunctionBytecode` and return its
     /// index in the program's function table.
-    fn compile_function(&mut self, params: &[String], body: &[Stmt]) -> usize {
+    fn compile_function(&mut self, params: &[Pattern], body: &[Stmt]) -> usize {
         // Compile the body into a separate instruction stream.
         // Nested functions are pushed to self.functions (shared) first.
         let mut sub_program = Program::new();
@@ -131,7 +131,7 @@ impl<'a> Compiler<'a> {
                 mutable,
             } => {
                 self.emit_expr(value);
-                self.emit(Instruction::DefineLocal(name.clone(), *mutable));
+                self.emit_define_pattern(name, *mutable);
             }
             Stmt::VarDecls {
                 declarations,
@@ -139,7 +139,7 @@ impl<'a> Compiler<'a> {
             } => {
                 for (name, value) in declarations {
                     self.emit_expr(value);
-                    self.emit(Instruction::DefineLocal(name.clone(), *mutable));
+                    self.emit_define_pattern(name, *mutable);
                 }
             }
             Stmt::FunctionDecl { name, params, body } => {
@@ -367,6 +367,19 @@ impl<'a> Compiler<'a> {
             Stmt::Expr(e) => {
                 self.emit_expr(e);
                 self.emit(Instruction::Pop);
+            }
+        }
+    }
+
+    /// Emit the binding of a declaration target: simple identifiers use the
+    /// dedicated `DefineLocal`; destructuring patterns use `DestructureDefine`.
+    fn emit_define_pattern(&mut self, pattern: &Pattern, mutable: bool) {
+        match pattern {
+            Pattern::Identifier(name) => {
+                self.emit(Instruction::DefineLocal(name.clone(), mutable));
+            }
+            _ => {
+                self.emit(Instruction::DestructureDefine(pattern.clone(), mutable));
             }
         }
     }
