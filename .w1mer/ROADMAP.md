@@ -59,5 +59,5 @@
 |---|------|-----|--------|--------|
 | 06 | Design opcode set + bytecode format (compile AST → bytecode) | 06.md | doing | Bytecode format + AST→bytecode compiler implemented (src/bytecode.rs, src/compiler.rs); awaiting cargo build + commit (no shell tool in session) |
 | 07 | Implement register-based VM (operand stack, execution loop, call frames) | 07.md | done | src/vm.rs: register-based VM (operand stack, pc, call frames, handler stack) executing all compiler opcodes; closures, this/construct, try/catch/finally, for-in, limits; 35 tests; 2026-09-29 b5e1b19 |
-| 08 | Integrate VM: CLI flag --vm, run same test suite, parity check | 08.md | todo | |
+| 08 | Integrate VM: CLI flag --vm, run same test suite, parity check | 08.md | done | --vm flag routes -e/file through bytecode VM; 15 parity tests verify interpreter vs VM output match; 2026-09-29 129f4b6 |
 <!-- w1mer:task:vm -->

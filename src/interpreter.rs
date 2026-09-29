@@ -1657,6 +1657,24 @@ impl Interpreter {
                     let value = args.get(index).cloned().unwrap_or(Value::Undefined);
                     self.env.borrow_mut().define(name, value, true);
                 }
+                // Build the `arguments` object for non-constructor calls.
+                if !construct {
+                    let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
+                    let args_obj = Object::with_internal(Internal::Array(slots));
+                    args_obj.borrow_mut().proto = Some(self.array_proto.clone());
+                    // Non-enumerable length (set by Array internal).
+                    // Add `callee` pointing back to the function (non-strict).
+                    if !self.strict {
+                        Interpreter::define_non_enumerable(
+                            &args_obj,
+                            "callee",
+                            Value::Object(func.clone()),
+                        );
+                    }
+                    self.env
+                        .borrow_mut()
+                        .define("arguments".into(), Value::Object(args_obj), true);
+                }
                 let result = self.eval_statements(&body);
                 self.env = previous;
                 self.leave_call();

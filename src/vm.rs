@@ -853,6 +853,20 @@ impl Vm {
                     let value = args.get(index).cloned().unwrap_or(Value::Undefined);
                     env.borrow_mut().define(name, value, true);
                 }
+                // Build the `arguments` object for non-constructor calls.
+                if !construct {
+                    let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
+                    let args_obj = Object::with_internal(Internal::Array(slots));
+                    args_obj.borrow_mut().proto = Some(self.native.array_proto.clone());
+                    if !self.strict {
+                        Interpreter::define_non_enumerable(
+                            &args_obj,
+                            "callee",
+                            Value::Object(func.clone()),
+                        );
+                    }
+                    env.borrow_mut().define("arguments".into(), Value::Object(args_obj), true);
+                }
                 // Save the caller's state and switch into the body stream.
                 let frame = Frame {
                     return_pc: self.pc,
