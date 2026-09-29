@@ -1121,6 +1121,10 @@ impl Parser {
             return Ok(args);
         }
         loop {
+            // Trailing comma: `f(1, 2,)`
+            if self.at(&TokenKind::RightParen) {
+                break;
+            }
             args.push(self.expression()?);
             if self.eat(&TokenKind::RightParen) {
                 break;
