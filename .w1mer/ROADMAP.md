@@ -49,8 +49,8 @@
 
 | # | Task | Doc | Status | Effect |
 |---|------|-----|--------|--------|
-| 09 | Baseline test262 pass rate + initial fixes | 09.md | doing | language 28.6%→34.4% (500 sample); added arguments object, eval(), strict mode guards, trailing semicolon fix; 2026-09-29 |
-| 10 | Improve test262 pass rate (parse errors, runtime errors) | 10.md | todo | |
+| 09 | Baseline test262 pass rate + initial fixes | 09.md | done | language 26.3%→27.3% (1000 sample); added arguments object, eval(), destructuring, strict mode guards, trailing semicolon fix; 2026-09-29 |
+| 10 | Improve test262 pass rate (parse errors, runtime errors) | 10.md | doing | 419 parse errors + 232 runtime errors remaining (1000 sample); 2026-09-29 |
 <!-- w1mer:task:test262 -->
 
 (Items awaiting re-prioritization)
@@ -63,7 +63,7 @@
 
 | # | Task | Doc | Status | Effect |
 |---|------|-----|--------|--------|
-| 06 | Design opcode set + bytecode format (compile AST → bytecode) | 06.md | doing | Bytecode format + AST→bytecode compiler implemented (src/bytecode.rs, src/compiler.rs); awaiting cargo build + commit (no shell tool in session) |
+| 06 | Design opcode set + bytecode format (compile AST → bytecode) | 06.md | done | src/bytecode.rs + src/compiler.rs; 2026-09-29 03091da |
 | 07 | Implement register-based VM (operand stack, execution loop, call frames) | 07.md | done | src/vm.rs: register-based VM (operand stack, pc, call frames, handler stack) executing all compiler opcodes; closures, this/construct, try/catch/finally, for-in, limits; 35 tests; 2026-09-29 b5e1b19 |
 | 08 | Integrate VM: CLI flag --vm, run same test suite, parity check | 08.md | done | --vm flag routes -e/file through bytecode VM; 15 parity tests verify interpreter vs VM output match; 2026-09-29 129f4b6 |
 <!-- w1mer:task:vm -->
