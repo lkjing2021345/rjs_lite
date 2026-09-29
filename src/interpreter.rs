@@ -368,6 +368,21 @@ impl Interpreter {
                 "propertyIsEnumerable",
                 self.native_method("Object.prototype.propertyIsEnumerable"),
             );
+            Self::define_non_enumerable(
+                &self.object_proto,
+                "valueOf",
+                self.native_method("Object.prototype.valueOf"),
+            );
+            Self::define_non_enumerable(
+                &self.object_proto,
+                "toLocaleString",
+                self.native_method("Object.prototype.toLocaleString"),
+            );
+            Self::define_non_enumerable(
+                &self.object_proto,
+                "isPrototypeOf",
+                self.native_method("Object.prototype.isPrototypeOf"),
+            );
         }
         if let Some(Value::Object(array_ctor)) = self.env.borrow().get("Array") {
             Self::define_non_enumerable(
@@ -1361,10 +1376,11 @@ impl Interpreter {
                 return;
             }
         }
-        object
-            .borrow_mut()
-            .props
-            .insert(property.to_string(), value);
+        let mut object = object.borrow_mut();
+        object.props.insert(property.to_string(), value);
+        // A plain-object assignment shadows a prototype property; the property
+        // is now own+enumerable, so drop any inherited non-enumerable marker.
+        object.non_enumerable_props.remove(property);
     }
 
     fn is_own_enumerable_property(&self, object: &ObjectRef, property: &str) -> bool {
@@ -1420,13 +1436,19 @@ impl Interpreter {
                     .unwrap_or(Value::Undefined);
             }
         }
+        let writable = !object
+            .non_enumerable_props
+            .contains(&("__writable_".to_string() + property));
+        let configurable = !object
+            .non_enumerable_props
+            .contains(&("__configurable_".to_string() + property));
         object
             .props
             .get(property)
             .cloned()
             .map(|value| {
                 let enumerable = !object.non_enumerable_props.contains(property);
-                self.data_descriptor(value, true, enumerable, true)
+                self.data_descriptor(value, writable, enumerable, configurable)
             })
             .unwrap_or(Value::Undefined)
     }
@@ -1672,26 +1694,45 @@ impl Interpreter {
                         "Object.defineProperty expects descriptor object",
                     ));
                 };
-                let value = descriptor.borrow().props.get("value").cloned();
-                let writable = descriptor
-                    .borrow()
+                let desc = descriptor.borrow();
+                let value = desc.props.get("value").cloned();
+                let writable = desc
                     .props
                     .get("writable")
                     .map_or(true, |v| v.is_truthy());
-                let enumerable = descriptor
-                    .borrow()
+                let enumerable = desc
                     .props
                     .get("enumerable")
                     .map_or(false, |v| v.is_truthy());
+                let configurable = desc
+                    .props
+                    .get("configurable")
+                    .map_or(true, |v| v.is_truthy());
+                drop(desc);
+
                 if let Some(value) = value {
+                    // Reject changing a non-configurable own property.
+                    if target.borrow().props.contains_key(&key)
+                        && target.borrow().non_enumerable_props.contains(&("__configurable_".to_string() + &key))
+                    {
+                        return Err(JsError::type_error(format!(
+                            "cannot redefine non-configurable property `{key}`"
+                        )));
+                    }
                     self.set_property(&target, &key, value);
+                    let mut target = target.borrow_mut();
                     if !writable {
-                        let mut target = target.borrow_mut();
-                        target.non_enumerable_props.insert("__writable_".to_string() + &key);
+                        target
+                            .non_enumerable_props
+                            .insert("__writable_".to_string() + &key);
                     }
                     if !enumerable {
-                        let mut target = target.borrow_mut();
                         target.non_enumerable_props.insert(key.clone());
+                    }
+                    if !configurable {
+                        target
+                            .non_enumerable_props
+                            .insert("__configurable_".to_string() + &key);
                     }
                 }
                 Ok(Value::Object(target))
@@ -1705,17 +1746,51 @@ impl Interpreter {
                 let property = args.get(1).cloned().unwrap_or(Value::Undefined).to_string();
                 Ok(self.get_own_property_descriptor(&object, &property))
             }
-"Object.create" => {
+            "Object.create" => {
                 let proto = args.first().cloned().unwrap_or(Value::Undefined);
                 let obj = Object::plain();
                 match proto {
                     Value::Object(proto) => {
                         obj.borrow_mut().proto = Some(proto);
-                        Ok(Value::Object(obj))
                     }
-                    Value::Null => Ok(Value::Object(obj)),
-                    _ => Err(JsError::type_error("Object.create expects object or null")),
+                    Value::Null => {}
+                    _ => return Err(JsError::type_error("Object.create expects object or null")),
                 }
+                // Second argument: a properties object whose own
+                // enumerable data descriptors are defined on the result.
+                if let Some(Value::Object(props)) = args.get(1).cloned() {
+                    let desc = props.borrow();
+                    for (k, v) in desc.props.iter() {
+                        if desc.non_enumerable_props.contains(k) {
+                            continue;
+                        }
+                        if let Value::Object(d) = v {
+                            let d = d.borrow();
+                            let value = d.props.get("value").cloned();
+                            let writable = d.props.get("writable")
+                                .map_or(true, |vv| vv.is_truthy());
+                            let enumerable = d.props.get("enumerable")
+                                .map_or(false, |vv| vv.is_truthy());
+                            let configurable = d.props.get("configurable")
+                                .map_or(true, |vv| vv.is_truthy());
+                            drop(d);
+                            if let Some(value) = value {
+                                obj.borrow_mut().props.insert(k.clone(), value);
+                                let mut o = obj.borrow_mut();
+                                if !writable {
+                                    o.non_enumerable_props.insert("__writable_".to_string() + k);
+                                }
+                                if !enumerable {
+                                    o.non_enumerable_props.insert(k.clone());
+                                }
+                                if !configurable {
+                                    o.non_enumerable_props.insert("__configurable_".to_string() + k);
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Value::Object(obj))
             }
             "Function.prototype.call" => {
                 let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
@@ -1926,6 +2001,35 @@ impl Interpreter {
                     return Ok(Value::Bool(false));
                 };
                 Ok(Value::Bool(self.is_own_enumerable_property(&object, &key)))
+            }
+            "Object.prototype.valueOf" => Ok(this_value.clone()),
+            "Object.prototype.toLocaleString" => {
+                // Delegate to toString per spec §19.1.3.19
+                Ok(self.call_native(
+                    "Object.prototype.toString",
+                    Vec::new(),
+                    this_value.clone(),
+                    None,
+                )?)
+            }
+            "Object.prototype.isPrototypeOf" => {
+                let receiver = args.first().cloned().unwrap_or(Value::Undefined);
+                let Value::Object(proto_obj) = this_value else {
+                    return Ok(Value::Bool(false));
+                };
+                let receiver_obj = match &receiver {
+                    Value::Object(o) => o.clone(),
+                    _ => return Ok(Value::Bool(false)),
+                };
+                // Walk the prototype chain of receiver_obj to check if proto_obj is in it
+                let mut current = Some(receiver_obj.clone());
+                while let Some(obj) = current {
+                    if Rc::ptr_eq(&obj, &proto_obj) {
+                        return Ok(Value::Bool(true));
+                    }
+                    current = obj.borrow().proto.clone();
+                }
+                Ok(Value::Bool(false))
             }
             "Array.prototype.join" => {
                 let sep = args
@@ -2832,11 +2936,21 @@ impl Interpreter {
                 };
                 for source in args.iter().skip(1) {
                     if let Value::Object(src) = source {
-                        let src = src.borrow();
-                        for key in src.props.keys() {
-                            if !src.non_enumerable_props.contains(key) {
-                                target.borrow_mut().props.insert(key.clone(), src.props[key].clone());
+                        // Walk the prototype chain so inherited enumerable
+                        // own properties are copied (spec: ownKeys of the source
+                        // object, which includes inherited ones for assign).
+                        let mut current = Some(src.clone());
+                        while let Some(s) = current {
+                            let s = s.borrow();
+                            for key in s.props.keys() {
+                                if !s.non_enumerable_props.contains(key) {
+                                    target
+                                        .borrow_mut()
+                                        .props
+                                        .insert(key.clone(), s.props[key].clone());
+                                }
                             }
+                            current = s.proto.clone();
                         }
                     }
                 }
@@ -4049,5 +4163,198 @@ mod tests {
             run_source(src).unwrap(),
             Value::String("0,1,2,3,4,5,6,7,8,9,10,11".into())
         );
+    }
+
+    // ---- Task 01: harden object/array/property-descriptor/prototype semantics ----
+
+    // set_property: shadowing a prototype property must make it own+enumerable.
+    #[test]
+    fn set_property_shadows_prototype_property() {
+        let src = "let proto={x:1}; let o=Object.create(proto); o.x=2; o.hasOwnProperty('x') && o.x === 2 && Object.keys(o).length === 1;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn set_property_shadowed_property_is_enumerable() {
+        let src = "let proto={x:1}; let o=Object.create(proto); o.x=2; o.propertyIsEnumerable('x');";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    // instanceof: walk starts at the left object's [[Prototype]] (spec §13.5.3.1).
+    #[test]
+    fn instanceof_matches_when_left_object_is_the_right_prototype() {
+        let src = "function C(){} let c=new C(); c instanceof C;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn instanceof_matches_regular_instance() {
+        let src = "function C(){} let c=new C(); c instanceof C;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn instanceof_rejects_unrelated_ctor() {
+        let src = "function A(){} function B(){} let a=new A(); a instanceof B;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // Object.defineProperty: descriptor flags must round-trip.
+    #[test]
+    fn define_property_honors_writable_flag() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 1, writable: false}); let d=Object.getOwnPropertyDescriptor(o, 'a'); d.writable;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn define_property_honors_configurable_flag() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 1, configurable: false}); let d=Object.getOwnPropertyDescriptor(o, 'a'); d.configurable;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn define_property_defaults_writable_configurable_to_true() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 1}); let d=Object.getOwnPropertyDescriptor(o, 'a'); d.writable + ':' + d.configurable;";
+        assert_eq!(run_source(src).unwrap(), Value::String("true:true".into()));
+    }
+
+    #[test]
+    fn define_property_rejects_redefining_non_configurable() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 1, configurable: false}); Object.defineProperty(o, 'a', {value: 2});";
+        let err = run_source(src).unwrap_err();
+        assert!(err.to_string().contains("non-configurable"));
+    }
+
+    #[test]
+    fn define_property_non_enumerable_is_not_in_keys() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 1, enumerable: false}); Object.keys(o).length;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(0.0));
+    }
+
+    // Object.assign: must copy inherited enumerable own properties.
+    #[test]
+    fn object_assign_copies_inherited_enumerable_properties() {
+        let src = "let proto={x:1}; let o=Object.create(proto); let t={}; Object.assign(t, o); t.x;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(1.0));
+    }
+
+    #[test]
+    fn object_assign_skips_non_enumerable_source_properties() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 1, enumerable: false}); let t={}; Object.assign(t, o); ('a' in t);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // Object.create: second-arg properties object must be applied.
+    #[test]
+    fn object_create_applies_properties_object() {
+        let src = "let o=Object.create(null, {x: {value: 7}}); o.x;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(7.0));
+    }
+
+    #[test]
+    fn object_create_properties_object_is_own() {
+        let src = "let o=Object.create(null, {x: {value: 7}}); Object.getOwnPropertyNames(o).length;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(1.0));
+    }
+
+    // getOwnPropertyDescriptor: array length stays non-enumerable/non-configurable.
+    #[test]
+    fn get_own_property_descriptor_array_length_flags() {
+        let src = "let d=Object.getOwnPropertyDescriptor([1,2], 'length'); d.enumerable + ':' + d.configurable;";
+        assert_eq!(run_source(src).unwrap(), Value::String("false:false".into()));
+    }
+
+    // Property assignment vs prototype chain: deletion does not expose inherited.
+    #[test]
+    fn delete_own_property_exposes_inherited() {
+        let src = "let proto={x:1}; let o=Object.create(proto); o.x=2; delete o.x; o.x;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(1.0));
+    }
+
+    // Object.create: second-arg non-enumerable descriptor flag respected.
+    #[test]
+    fn object_create_non_enumerable_descriptor_not_in_keys() {
+        let src = "let o=Object.create(null, {x: {value: 7, enumerable: false}}); Object.keys(o).length;";
+        assert_eq!(run_source(src).unwrap(), Value::Number(0.0));
+    }
+
+    // Object.defineProperty: non-configurable prevents redefining value.
+    #[test]
+    fn define_property_non_configurable_prevents_flag_change() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 1, configurable: false}); Object.defineProperty(o, 'a', {value: 2});";
+        let err = run_source(src).unwrap_err();
+        assert!(err.to_string().contains("non-configurable"));
+    }
+
+    // instanceof: rejects non-object right-hand side.
+    #[test]
+    fn instanceof_rejects_non_object_right() {
+        let src = "(1) instanceof 1;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    // Object.defineProperty: accessor descriptors not supported (data-only).
+    // Verify data descriptor round-trips with all flags.
+    #[test]
+    fn define_property_all_flags_roundtrip() {
+        let src = "let o={}; Object.defineProperty(o, 'a', {value: 42, writable: false, enumerable: false, configurable: false}); let d=Object.getOwnPropertyDescriptor(o, 'a'); d.value + ':' + d.writable + ':' + d.enumerable + ':' + d.configurable;";
+        assert_eq!(run_source(src).unwrap(), Value::String("42:false:false:false".into()));
+    }
+
+    // Object.prototype.valueOf: returns this for objects.
+    #[test]
+    fn object_prototype_value_of_returns_this() {
+        let src = "let o={x:1}; let v=o.valueOf(); v === o;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_prototype_value_of_returns_this_for_array() {
+        let src = "let a=[1,2,3]; let v=a.valueOf(); v === a;";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    // Object.prototype.toLocaleString: delegates to toString for plain objects.
+    #[test]
+    fn object_prototype_to_locale_string_delegates_to_to_string() {
+        let src = "let o={}; o.toLocaleString() === '[object Object]';";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_prototype_to_locale_string_returns_same_as_to_string_for_array() {
+        let src = "let a=[1,2,3]; a.toLocaleString() === a.toString();";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    // Object.prototype.isPrototypeOf: checks if receiver is in prototype chain.
+    #[test]
+    fn object_prototype_is_prototype_of_returns_true_for_own() {
+        let src = "let proto={}; let o=Object.create(proto); proto.isPrototypeOf(o);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_prototype_is_prototype_of_returns_false_for_unrelated() {
+        let src = "let a={}; let b={}; a.isPrototypeOf(b);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn object_prototype_is_prototype_of_returns_false_for_non_object() {
+        let src = "let proto={}; proto.isPrototypeOf(1);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn object_prototype_is_prototype_of_checks_full_chain() {
+        let src = "let proto={}; let o=Object.create(proto); let o2=Object.create(o); proto.isPrototypeOf(o2);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn object_prototype_is_prototype_of_returns_false_for_null() {
+        let src = "let proto={}; proto.isPrototypeOf(null);";
+        assert_eq!(run_source(src).unwrap(), Value::Bool(false));
     }
 }
