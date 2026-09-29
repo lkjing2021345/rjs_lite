@@ -3,19 +3,38 @@ use crate::error::{JsError, JsResult, Span};
 use crate::token::{Token, TokenKind};
 
 pub fn parse(tokens: Vec<Token>) -> JsResult<Program> {
-    Parser { tokens, pos: 0 }.program()
+    Parser {
+        tokens,
+        pos: 0,
+        strict: false,
+    }
+    .program()
 }
 
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// Program-level strict mode, enabled by a leading `"use strict"`
+    /// directive. This affects how function declarations in statement
+    /// positions are validated.
+    strict: bool,
 }
 
 impl Parser {
     fn program(&mut self) -> JsResult<Program> {
         let mut statements = Vec::new();
         while !self.at(&TokenKind::Eof) {
-            statements.push(self.statement()?);
+            let statement = self.statement()?;
+            // A leading `"use strict"` directive puts the whole program in
+            // strict mode; mirror the interpreter's `detect_strict_mode`.
+            if statements.is_empty() {
+                if let Stmt::Expr(Expr::String(s)) = &statement {
+                    if s == "use strict" {
+                        self.strict = true;
+                    }
+                }
+            }
+            statements.push(statement);
         }
         Ok(Program { statements })
     }
@@ -192,7 +211,7 @@ impl Parser {
         self.expect(&TokenKind::RightParen)?;
         Ok(Stmt::While {
             condition,
-            body: self.statement_as_block()?,
+            body: self.iteration_body_as_block()?,
         })
     }
 
@@ -212,7 +231,7 @@ impl Parser {
                 return Ok(Stmt::ForIn {
                     left: Box::new(expr),
                     right,
-                    body: self.statement_as_block()?,
+                    body: self.iteration_body_as_block()?,
                 });
             }
             self.expect(&TokenKind::Semicolon)?;
@@ -229,7 +248,7 @@ impl Parser {
                     return Ok(Stmt::ForIn {
                         left: Box::new(Expr::Identifier(ident.clone())),
                         right,
-                        body: self.statement_as_block()?,
+                        body: self.iteration_body_as_block()?,
                     });
                 }
             }
@@ -243,7 +262,7 @@ impl Parser {
                     return Ok(Stmt::ForIn {
                         left: Box::new(Expr::Identifier(ident.clone())),
                         right,
-                        body: self.statement_as_block()?,
+                        body: self.iteration_body_as_block()?,
                     });
                 }
             }
@@ -266,7 +285,7 @@ impl Parser {
             init,
             condition,
             update,
-            body: self.statement_as_block()?,
+            body: self.iteration_body_as_block()?,
         })
     }
 
@@ -312,10 +331,51 @@ impl Parser {
 
     fn statement_as_block(&mut self) -> JsResult<Vec<Stmt>> {
         if self.eat(&TokenKind::LeftBrace) {
-            self.block()
-        } else {
-            Ok(vec![self.statement()?])
+            return self.block();
         }
+        // An `if`/`else` clause may hold a function declaration in sloppy
+        // mode (Annex B.3.3), but not in strict mode.
+        self.reject_function_declaration_in_statement_position(true)?;
+        Ok(vec![self.statement()?])
+    }
+
+    /// Parse the body of an iteration statement (`while`, `for`, `for-in`).
+    /// Unlike `if` clauses, these never admit a bare function declaration,
+    /// regardless of strict mode.
+    fn iteration_body_as_block(&mut self) -> JsResult<Vec<Stmt>> {
+        if self.eat(&TokenKind::LeftBrace) {
+            return self.block();
+        }
+        self.reject_function_declaration_in_statement_position(false)?;
+        Ok(vec![self.statement()?])
+    }
+
+    /// Reject a function declaration used directly where the grammar only
+    /// permits a `Statement`. When `strict_only` is set, sloppy-mode programs
+    /// are left untouched so Annex B extensions keep working.
+    fn reject_function_declaration_in_statement_position(
+        &self,
+        strict_only: bool,
+    ) -> JsResult<()> {
+        if strict_only && !self.strict {
+            return Ok(());
+        }
+        if self.at(&TokenKind::Function) || self.at_async_function_decl() {
+            return Err(self.error(
+                "function declaration not allowed in statement position in strict mode",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether the cursor sits on `async function`, i.e. an async function
+    /// declaration (as opposed to an `async (...) => ...` expression).
+    fn at_async_function_decl(&self) -> bool {
+        self.at(&TokenKind::Async)
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|t| matches!(t.kind, TokenKind::Function))
     }
 
     fn block(&mut self) -> JsResult<Vec<Stmt>> {
@@ -1081,5 +1141,43 @@ mod tests {
     #[test]
     fn parses_uninitialized_let_before_newline_statement() {
         assert!(parse(lex("let x\nx = 1;").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn rejects_function_decl_in_strict_if_branch() {
+        assert!(parse(lex("\"use strict\"; if (true) function g() {}").unwrap()).is_err());
+    }
+
+    #[test]
+    fn rejects_function_decl_in_strict_else_branch() {
+        assert!(parse(lex("\"use strict\"; if (true) {} else function g() {}").unwrap()).is_err());
+    }
+
+    #[test]
+    fn rejects_async_function_decl_in_strict_if_branch() {
+        assert!(
+            parse(lex("\"use strict\"; if (true) async function g() {}").unwrap()).is_err()
+        );
+    }
+
+    #[test]
+    fn allows_function_decl_in_sloppy_if_branch() {
+        assert!(parse(lex("if (true) function g() {}").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn rejects_function_decl_in_while_body() {
+        assert!(parse(lex("while (false) function g() {}").unwrap()).is_err());
+    }
+
+    #[test]
+    fn rejects_function_decl_in_for_body() {
+        assert!(parse(lex("for (;false;) function g() {}").unwrap()).is_err());
+    }
+
+    #[test]
+    fn allows_strict_top_level_and_block_function_decls() {
+        assert!(parse(lex("\"use strict\"; function g() {}").unwrap()).is_ok());
+        assert!(parse(lex("\"use strict\"; if (true) { function g() {} }").unwrap()).is_ok());
     }
 }
