@@ -384,6 +384,13 @@ impl<'a> Compiler<'a> {
                 self.emit_expr(e);
                 self.emit(Instruction::Pop);
             }
+            Stmt::With { expression, body } => {
+                // The VM does not support `with` scope; evaluate the expression
+                // (for side effects) and compile the body normally.
+                self.emit_expr(expression);
+                self.emit(Instruction::Pop);
+                self.emit_statements(body);
+            }
         }
     }
 

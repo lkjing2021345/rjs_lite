@@ -85,6 +85,11 @@ pub enum Stmt {
     Break,
     Continue,
     Expr(Expr),
+    /// `with (expr) statement`
+    With {
+        expression: Expr,
+        body: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

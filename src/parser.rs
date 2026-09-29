@@ -70,6 +70,12 @@ impl Parser {
         } else if self.eat(&TokenKind::Continue) {
             self.optional_semicolon();
             Ok(Stmt::Continue)
+        } else if self.eat(&TokenKind::With) {
+            self.expect(&TokenKind::LeftParen)?;
+            let expression = self.expression()?;
+            self.expect(&TokenKind::RightParen)?;
+            let body = self.statement_as_block()?;
+            Ok(Stmt::With { expression, body })
         } else if self.eat(&TokenKind::LeftBrace) {
             Ok(Stmt::Block(self.block()?))
         } else {

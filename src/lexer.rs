@@ -30,6 +30,17 @@ impl Lexer {
         if self.peek() == Some('\u{FEFF}') {
             self.advance();
         }
+        // Hashbang comment: `#!...` at the very start of the source.
+        if self.peek() == Some('#') && self.peek_next() == Some('!') {
+            self.advance();
+            self.advance();
+            while let Some(c) = self.peek() {
+                if c == '\n' || c == '\r' {
+                    break;
+                }
+                self.advance();
+            }
+        }
         while let Some(ch) = self.peek() {
             match ch {
                 ' ' | '\t' | '\r' | '\n' => {

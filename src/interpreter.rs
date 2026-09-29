@@ -1143,6 +1143,22 @@ impl Interpreter {
             Stmt::Continue => Ok(Flow::Continue),
             Stmt::Block(stmts) => self.with_child(stmts),
             Stmt::Expr(expr) => Ok(Flow::Value(self.eval_expr(expr)?)),
+            Stmt::With { expression, body } => {
+                let obj = self.eval_expr(expression)?;
+                // Create a child env whose properties are the with-object's
+                // own + inherited properties.
+                let previous = self.env.clone();
+                let mut child_env = Env::child(previous.clone());
+                if let Value::Object(o) = &obj {
+                    for (k, v) in o.borrow().props.clone() {
+                        child_env.borrow_mut().define(k, v, true);
+                    }
+                }
+                self.env = child_env;
+                let result = self.eval_statements(body);
+                self.env = previous;
+                result
+            }
         }
     }
 
