@@ -1731,6 +1731,32 @@ impl Interpreter {
                 );
                 Ok(Value::Undefined)
             }
+            "eval" => {
+                let code = args
+                    .first()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                let tokens = crate::lexer::lex(&code)
+                    .map_err(|e| JsError::syntax_error(e.to_string()))?;
+                let program = crate::parser::parse(tokens)
+                    .map_err(|e| JsError::syntax_error(e.to_string()))?;
+                // Save state, execute, restore.
+                let saved_env = self.env.clone();
+                let saved_strict = self.strict;
+                let saved_output = std::mem::take(&mut self.output);
+                let result = self.eval_statements(&program.statements);
+                self.env = saved_env;
+                self.strict = saved_strict;
+                self.output = saved_output;
+                match result {
+                    Ok(Flow::Value(v)) => Ok(v),
+                    Ok(Flow::Return(v)) => Ok(v),
+                    Ok(Flow::Throw(v)) => Err(JsError::runtime(v.to_string())),
+                    Ok(Flow::Break) => Err(JsError::syntax_error("break used outside loop")),
+                    Ok(Flow::Continue) => Err(JsError::syntax_error("continue used outside loop")),
+                    Err(e) => Err(e),
+                }
+            }
             "Error" | "TypeError" | "SyntaxError" | "ReferenceError" | "RangeError" | "EvalError" | "URIError" => {
                 let obj = Object::plain();
                 obj.borrow_mut().proto = Some(self.error_proto.clone());
