@@ -49,8 +49,8 @@
 
 | # | Task | Doc | Status | Effect |
 |---|------|-----|--------|--------|
-| 09 | Baseline test262 pass rate + initial fixes | 09.md | done | language 26.3%→27.3% (1000 sample); added arguments object, eval(), destructuring, strict mode guards, trailing semicolon fix; 2026-09-29 |
-| 10 | Improve test262 pass rate (parse errors, runtime errors) | 10.md | doing | 419 parse errors + 232 runtime errors remaining (1000 sample); 2026-09-29 |
+| 09 | Baseline test262 pass rate + initial fixes | 09.md | done | language 26.3%→29.35% (2000 sample); added arguments object, eval(), destructuring, strict mode guards, trailing semicolon fix; 2026-09-29 |
+| 10 | Improve test262 pass rate (parse errors, runtime errors) | 10.md | doing | 933 parse errors (BigInt/async/$DONOTEVALUATE) + 374 runtime errors remaining (2000 sample); 2026-09-29 |
 <!-- w1mer:task:test262 -->
 
 (Items awaiting re-prioritization)
