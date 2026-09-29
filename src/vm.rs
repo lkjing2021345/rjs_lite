@@ -818,7 +818,19 @@ impl Vm {
                 .native
                 .call_native(name, args, this_value, if construct { Some(func) } else { None })
                 .map_err(|e| JsError::flow(Flow::Throw(Value::String(e.to_string())))),
-            Internal::Function { params, func_index, .. } => {
+            Internal::Function {
+                params,
+                func_index,
+                generator,
+                ..
+            } => {
+                if generator {
+                    // The VM does not implement resumable generator bodies
+                    // yet; calling a generator yields a generator object
+                    // whose `.next()` reports completion immediately. This
+                    // keeps generator code parseable and non-crashing.
+                    return Ok(self.make_vm_generator());
+                }
                 self.enter_call()?;
                 let key = Rc::as_ptr(&func) as usize;
                 let (closure_env, function_index) = self
@@ -918,13 +930,32 @@ impl Vm {
         result
     }
 
+    /// Create a minimal generator object. The VM cannot resume generator
+    /// bodies, so its `.next()` reports `{ value: undefined, done: true }`.
+    fn make_vm_generator(&mut self) -> Value {
+        let obj = Object::plain();
+        obj.borrow_mut().proto = Some(self.native.object_proto.clone());
+        Interpreter::define_non_enumerable(
+            &obj,
+            "next",
+            self.native.native_method("Generator.prototype.next"),
+        );
+        self.native.register_noop_generator(&obj);
+        Value::Object(obj)
+    }
+
     fn make_function(&mut self, index: usize) -> Value {
-        let FunctionBytecode { params, .. } = &self.program.functions[index];
+        let FunctionBytecode {
+            params,
+            is_generator,
+            ..
+        } = &self.program.functions[index];
         let obj = Object::with_internal(Internal::Function {
             params: params.clone(),
             body: Vec::new(),
             func_index: index + 1,
             is_async: false,
+            generator: *is_generator,
         });
         obj.borrow_mut().proto = Some(self.native.function_proto.clone());
         let proto = Object::plain();

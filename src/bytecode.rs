@@ -123,6 +123,9 @@ pub enum Instruction {
 pub struct FunctionBytecode {
     pub params: Vec<Pattern>,
     pub instructions: Vec<Instruction>,
+    /// True for generator functions (`function*`, `async function*`). Calling
+    /// one produces a generator object rather than running the body.
+    pub is_generator: bool,
 }
 
 /// The compiled program: the top-level instruction stream plus the constant

@@ -77,7 +77,7 @@ impl<'a> Compiler<'a> {
 
     /// Compile a function body into a new `FunctionBytecode` and return its
     /// index in the program's function table.
-    fn compile_function(&mut self, params: &[Pattern], body: &[Stmt]) -> usize {
+    fn compile_function(&mut self, params: &[Pattern], body: &[Stmt], is_generator: bool) -> usize {
         // Compile the body into a separate instruction stream.
         // Nested functions are pushed to self.functions (shared) first.
         let mut sub_program = Program::new();
@@ -91,6 +91,7 @@ impl<'a> Compiler<'a> {
         let mut func = FunctionBytecode {
             params: params.to_vec(),
             instructions: std::mem::take(&mut sub_program.instructions),
+            is_generator,
         };
         // Reindex PushFunction refs: nested functions were pushed to
         // self.functions at indices 0..N-1 (relative to sub's base).
@@ -142,8 +143,13 @@ impl<'a> Compiler<'a> {
                     self.emit_define_pattern(name, *mutable);
                 }
             }
-            Stmt::FunctionDecl { name, params, body } => {
-                let func_idx = self.compile_function(params, body);
+            Stmt::FunctionDecl {
+                name,
+                params,
+                body,
+                generator,
+            } => {
+                let func_idx = self.compile_function(params, body, *generator);
                 self.emit(Instruction::PushFunction(func_idx));
                 self.emit(Instruction::DefineLocal(name.clone(), false));
             }
@@ -422,19 +428,37 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
-            Expr::Function { name: _, params, body } => {
-                let idx = self.compile_function(params, body);
+            Expr::Function {
+                name: _,
+                params,
+                body,
+                generator,
+            } => {
+                let idx = self.compile_function(params, body, *generator);
                 self.emit(Instruction::PushFunction(idx));
             }
             Expr::ArrowFunction { params, body } => {
-                let idx = self.compile_function(params, body);
+                let idx = self.compile_function(params, body, false);
                 self.emit(Instruction::PushFunction(idx));
             }
-            Expr::AsyncFunction { name: _, params, body } => {
+            Expr::AsyncFunction {
+                name: _,
+                params,
+                body,
+                generator,
+            } => {
                 // In the VM, async functions run synchronously (no real
-                // scheduling). `await` is a no-op passthrough.
-                let idx = self.compile_function(params, body);
+                // scheduling). `await` is a no-op passthrough. Async
+                // generators are compiled as generators so calling one
+                // returns a generator object.
+                let idx = self.compile_function(params, body, *generator);
                 self.emit(Instruction::PushFunction(idx));
+            }
+            Expr::Yield(argument) => {
+                // `yield` is only reachable inside a generator body, which the
+                // VM never runs synchronously. Compile the operand so nesting
+                // stays consistent; the value is left on the stack.
+                self.emit_expr(argument);
             }
             Expr::Await(expr) => {
                 // `await` evaluates the operand; in our synchronous VM the

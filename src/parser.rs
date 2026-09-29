@@ -125,6 +125,8 @@ impl Parser {
     }
 
     fn function_decl(&mut self) -> JsResult<Stmt> {
+        // Optional generator marker: `function* name(...) { ... }`.
+        let generator = self.eat(&TokenKind::Star);
         let name = self.identifier()?;
         self.expect(&TokenKind::LeftParen)?;
         let params = self.params()?;
@@ -136,12 +138,14 @@ impl Parser {
             name,
             params,
             body,
+            generator,
         })
     }
 
     fn async_function_decl(&mut self) -> JsResult<Stmt> {
-        // `async function name(...) { ... }`
+        // `async function [*] name(...) { ... }`
         self.expect(&TokenKind::Function)?;
+        let generator = self.eat(&TokenKind::Star);
         let name = self.identifier()?;
         self.expect(&TokenKind::LeftParen)?;
         let params = self.params()?;
@@ -152,6 +156,7 @@ impl Parser {
             name,
             params,
             body,
+            generator,
         })
     }
 
@@ -749,6 +754,27 @@ impl Parser {
             })
         } else if self.eat(&TokenKind::Await) {
             Ok(Expr::Await(Box::new(self.unary()?)))
+        } else if self.eat(&TokenKind::Yield) {
+            // `yield`, `yield expr`, or `yield* expr` (delegation is treated
+            // as a plain yield for now). A line terminator after `yield`
+            // forces it to be a bare `yield` via ASI.
+            if self.eat(&TokenKind::Star) {
+                // Delegating yield: consume the iterable expression; the
+                // interpreter currently treats it as a normal yield.
+            }
+            let argument = if self.at(&TokenKind::Semicolon)
+                || self.at(&TokenKind::RightBrace)
+                || self.at(&TokenKind::RightParen)
+                || self.at(&TokenKind::RightBracket)
+                || self.at(&TokenKind::Comma)
+                || self.at(&TokenKind::Eof)
+                || self.current().span.line != self.previous_span().line
+            {
+                Expr::Undefined
+            } else {
+                self.assignment()?
+            };
+            Ok(Expr::Yield(Box::new(argument)))
         } else if self.eat(&TokenKind::Tilde) {
             Ok(Expr::Unary {
                 op: UnaryOp::BitwiseNot,
@@ -943,6 +969,8 @@ impl Parser {
     }
 
     fn function_expr(&mut self) -> JsResult<Expr> {
+        // Optional generator marker: `function* [name](...) { ... }`.
+        let generator = self.eat(&TokenKind::Star);
         let name = self.optional_identifier()?;
         self.expect(&TokenKind::LeftParen)?;
         let params = self.params()?;
@@ -951,12 +979,14 @@ impl Parser {
             name,
             params,
             body: self.block()?,
+            generator,
         })
     }
 
     fn async_function_expr(&mut self) -> JsResult<Expr> {
-        // `async function [name] (...) { ... }` or `async (params) => body`
+        // `async function [*] [name] (...) { ... }` or `async (params) => body`
         if self.eat(&TokenKind::Function) {
+            let generator = self.eat(&TokenKind::Star);
             let name = self.optional_identifier()?;
             self.expect(&TokenKind::LeftParen)?;
             let params = self.params()?;
@@ -965,6 +995,7 @@ impl Parser {
                 name,
                 params,
                 body: self.block()?,
+                generator,
             });
         }
         // `async (params) => body`
@@ -981,6 +1012,7 @@ impl Parser {
             name: None,
             params,
             body,
+            generator: false,
         })
     }
 
@@ -1092,6 +1124,24 @@ impl Parser {
                 let key = format!("computed:{}", Self::key_expr_to_string(&key_expr));
                 props.push((Some(key), value));
             } else {
+                // Generator / async-generator method prefix:
+                // `*name(...) {}` or `async *name(...) {}`.
+                let mut is_generator = false;
+                let mut is_async = false;
+                if self.at(&TokenKind::Star) {
+                    self.advance();
+                    is_generator = true;
+                } else if self.at(&TokenKind::Async)
+                    && self
+                        .tokens
+                        .get(self.pos + 1)
+                        .is_some_and(|t| matches!(t.kind, TokenKind::Star))
+                {
+                    self.advance();
+                    self.advance();
+                    is_generator = true;
+                    is_async = true;
+                }
                 let key = match self.advance().clone().kind {
                     TokenKind::Identifier(s) | TokenKind::String(s) => Some(s),
                     TokenKind::Number(n) => Some(n.to_string()),
@@ -1107,10 +1157,20 @@ impl Parser {
                     self.expect(&TokenKind::LeftBrace)?;
                     let body = self.block()?;
                     let k = key.clone().unwrap_or_default();
-                    let value = Expr::Function {
-                        name: Some(k),
-                        params,
-                        body,
+                    let value = if is_async {
+                        Expr::AsyncFunction {
+                            name: Some(k),
+                            params,
+                            body,
+                            generator: true,
+                        }
+                    } else {
+                        Expr::Function {
+                            name: Some(k),
+                            params,
+                            body,
+                            generator: is_generator,
+                        }
                     };
                     props.push((key, value));
                 } else {
@@ -1247,6 +1307,17 @@ mod tests {
     #[test]
     fn parses_function() {
         assert!(parse(lex("function f(x){ return x; } f(1);").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn parses_generator_forms() {
+        assert!(parse(lex("function* g(){ yield 1; }").unwrap()).is_ok());
+        assert!(parse(lex("var f = function* g(){ yield 1; };").unwrap()).is_ok());
+        assert!(parse(lex("var o = { *m(){ yield 1; } };").unwrap()).is_ok());
+        assert!(parse(lex("async function* g(){ yield 1; }").unwrap()).is_ok());
+        assert!(parse(lex("async function* g(){ yield 1; } ag();").unwrap()).is_ok());
+        // Bare `yield` and `yield*`.
+        assert!(parse(lex("function* g(){ yield; yield* xs; }").unwrap()).is_ok());
     }
 
     #[test]

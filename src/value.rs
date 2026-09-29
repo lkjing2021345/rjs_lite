@@ -45,6 +45,10 @@ pub enum Internal {
         func_index: usize,
         /// True for `async function` / `async (params) =>`.
         is_async: bool,
+        /// True for generator functions (`function*`, `async function*`).
+        /// Calling a generator produces a generator object instead of
+        /// running the body.
+        generator: bool,
     },
     Native(&'static str),
     Bound {
@@ -102,7 +106,7 @@ impl Value {
     }
 
     pub fn function(params: Vec<Pattern>, body: Vec<Stmt>) -> Value {
-        Value::Object(Object::with_internal(Internal::Function { params, body, func_index: 0, is_async: false }))
+        Value::Object(Object::with_internal(Internal::Function { params, body, func_index: 0, is_async: false, generator: false }))
     }
 
     pub fn native(name: &'static str) -> Value {

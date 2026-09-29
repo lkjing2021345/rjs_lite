@@ -40,6 +40,8 @@ pub enum Stmt {
         name: String,
         params: Vec<Pattern>,
         body: Vec<Stmt>,
+        /// True for `function* name(...) { ... }` generator declarations.
+        generator: bool,
     },
     Return(Option<Expr>),
     Throw(Expr),
@@ -96,6 +98,8 @@ pub enum Expr {
         name: Option<String>,
         params: Vec<Pattern>,
         body: Vec<Stmt>,
+        /// True for `function* (...) { ... }` generator functions.
+        generator: bool,
     },
     ArrowFunction {
         params: Vec<Pattern>,
@@ -106,7 +110,12 @@ pub enum Expr {
         name: Option<String>,
         params: Vec<Pattern>,
         body: Vec<Stmt>,
+        /// True for `async function* (...) { ... }` async generators.
+        generator: bool,
     },
+    /// `yield expr` — only valid inside generator function bodies. A bare
+    /// `yield` is represented as `Yield(Undefined)`.
+    Yield(Box<Expr>),
     /// `await expr` — only valid inside async function bodies.
     Await(Box<Expr>),
     TemplateLiteral {

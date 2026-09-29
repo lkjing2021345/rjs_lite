@@ -66,6 +66,29 @@ pub(crate) enum Flow {
     Throw(Value),
     Break,
     Continue,
+    /// Produced when a `yield` expression reaches the statement boundary.
+    /// Propagates out of the generator body like `Return`.
+    Yield(Value),
+}
+
+/// Captured state of a suspended generator. The body is re-run from the top
+/// on each `.next()` call; `yields_seen` records how many yields have already
+/// been delivered so the matching one can be captured and execution aborted.
+///
+/// This is a pragmatic tree-walking approximation: side effects before the
+/// next un-delivered `yield` are recomputed on each resume. It produces the
+/// correct `{value, done}` sequence for deterministic generator bodies.
+pub(crate) struct GeneratorState {
+    params: Vec<Pattern>,
+    body: Vec<Stmt>,
+    closure_env: Rc<RefCell<Env>>,
+    args: Vec<Value>,
+    this_value: Value,
+    /// Number of yields already delivered to callers.
+    yields_seen: usize,
+    /// True for generators created by the VM: no tree-walking body to run,
+    /// so `.next()` immediately reports completion.
+    noop: bool,
 }
 
 struct RefTarget {
@@ -76,6 +99,15 @@ struct RefTarget {
 pub struct Interpreter {
     pub(crate) env: Rc<RefCell<Env>>,
     pub(crate) closures: HashMap<usize, Rc<RefCell<Env>>>,
+    /// Live generator states keyed by generator-object pointer.
+    pub(crate) generators: HashMap<usize, GeneratorState>,
+    /// During a generator resume, the index of the yield to capture.
+    pub(crate) yield_target: Option<usize>,
+    /// Number of yields encountered during the current generator resume.
+    pub(crate) yield_counter: usize,
+    /// Set while evaluating a `yield` expression; consumed at the statement
+    /// boundary to produce `Flow::Yield`.
+    pub(crate) pending_yield: Option<Value>,
     pub(crate) output: Vec<String>,
     pub(crate) global: ObjectRef,
     pub(crate) object_proto: ObjectRef,
@@ -146,6 +178,10 @@ impl Interpreter {
         let mut this = Self {
             env,
             closures: HashMap::new(),
+            generators: HashMap::new(),
+            yield_target: None,
+            yield_counter: 0,
+            pending_yield: None,
             output: Vec::new(),
             global,
             object_proto,
@@ -822,6 +858,7 @@ impl Interpreter {
             Flow::Throw(v) => Err(JsError::runtime(v.to_string())),
             Flow::Break => Err(JsError::syntax_error("break used outside loop")),
             Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
+            Flow::Yield(_) => Err(JsError::syntax_error("yield used outside generator")),
         }
     }
 
@@ -857,7 +894,11 @@ impl Interpreter {
         for stmt in statements {
             match self.eval_stmt(stmt)? {
                 Flow::Value(v) => last = v,
-                flow @ (Flow::Return(_) | Flow::Throw(_) | Flow::Break | Flow::Continue) => {
+                flow @ (Flow::Return(_)
+                | Flow::Throw(_)
+                | Flow::Break
+                | Flow::Continue
+                | Flow::Yield(_)) => {
                     return Ok(flow);
                 }
             }
@@ -865,7 +906,17 @@ impl Interpreter {
         Ok(Flow::Value(last))
     }
 
+    /// Evaluate a statement, converting a `yield` encountered anywhere inside
+    /// its expression evaluation into a `Flow::Yield` unwinding signal.
     fn eval_stmt(&mut self, stmt: &Stmt) -> JsResult<Flow> {
+        let flow = self.eval_stmt_inner(stmt)?;
+        if let Some(value) = self.pending_yield.take() {
+            return Ok(Flow::Yield(value));
+        }
+        Ok(flow)
+    }
+
+    fn eval_stmt_inner(&mut self, stmt: &Stmt) -> JsResult<Flow> {
         self.step()?;
         match stmt {
             Stmt::VarDecl {
@@ -887,8 +938,13 @@ impl Interpreter {
                 }
                 Ok(Flow::Value(Value::Undefined))
             }
-            Stmt::FunctionDecl { name, params, body } => {
-                let value = self.make_function(params.clone(), body.clone());
+            Stmt::FunctionDecl {
+                name,
+                params,
+                body,
+                generator,
+            } => {
+                let value = self.make_function_async(params.clone(), body.clone(), false, *generator);
                 self.env
                     .borrow_mut()
                     .define(name.clone(), value.clone(), false);
@@ -957,7 +1013,7 @@ impl Interpreter {
                         Flow::Value(v) => last = v,
                         Flow::Break => break,
                         Flow::Continue => continue,
-                        r @ (Flow::Return(_) | Flow::Throw(_)) => return Ok(r),
+                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Yield(_)) => return Ok(r),
                     }
                 }
                 Ok(Flow::Value(last))
@@ -971,7 +1027,7 @@ impl Interpreter {
                 if let Some(init) = init {
                     match self.eval_stmt(init)? {
                         Flow::Value(_) => {}
-                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Break | Flow::Continue) => {
+                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Break | Flow::Continue | Flow::Yield(_)) => {
                             return Ok(r);
                         }
                     }
@@ -988,7 +1044,7 @@ impl Interpreter {
                         Flow::Value(v) => last = v,
                         Flow::Break => break,
                         Flow::Continue => {}
-                        r @ (Flow::Return(_) | Flow::Throw(_)) => return Ok(r),
+                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Yield(_)) => return Ok(r),
                     }
                     if let Some(update) = update {
                         self.eval_expr(update)?;
@@ -1033,7 +1089,7 @@ impl Interpreter {
                         Flow::Value(v) => last = v,
                         Flow::Break => break,
                         Flow::Continue => continue,
-                        r @ (Flow::Return(_) | Flow::Throw(_)) => return Ok(r),
+                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Yield(_)) => return Ok(r),
                     }
                 }
                 Ok(Flow::Value(last))
@@ -1054,7 +1110,7 @@ impl Interpreter {
                         match self.with_child(body)? {
                             Flow::Value(v) => last = v,
                             Flow::Break => return Ok(Flow::Value(last)),
-                            r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Continue) => {
+                            r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Continue | Flow::Yield(_)) => {
                                 return Ok(r);
                             }
                         }
@@ -1064,7 +1120,7 @@ impl Interpreter {
                     match self.with_child(default)? {
                         Flow::Value(v) => last = v,
                         Flow::Break => return Ok(Flow::Value(last)),
-                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Continue) => return Ok(r),
+                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Continue | Flow::Yield(_)) => return Ok(r),
                     }
                 }
                 Ok(Flow::Value(last))
@@ -1085,11 +1141,23 @@ impl Interpreter {
     }
 
     fn make_function(&mut self, params: Vec<Pattern>, body: Vec<Stmt>) -> Value {
-        self.make_function_async(params, body, false)
+        self.make_function_async(params, body, false, false)
     }
 
-    fn make_function_async(&mut self, params: Vec<Pattern>, body: Vec<Stmt>, is_async: bool) -> Value {
-        let obj = Object::with_internal(Internal::Function { params, body, func_index: 0, is_async });
+    fn make_function_async(
+        &mut self,
+        params: Vec<Pattern>,
+        body: Vec<Stmt>,
+        is_async: bool,
+        generator: bool,
+    ) -> Value {
+        let obj = Object::with_internal(Internal::Function {
+            params,
+            body,
+            func_index: 0,
+            is_async,
+            generator,
+        });
         obj.borrow_mut().proto = Some(self.function_proto.clone());
         let proto = Object::plain();
         proto.borrow_mut().proto = Some(self.object_proto.clone());
@@ -1098,6 +1166,139 @@ impl Interpreter {
         let value = Value::Object(obj.clone());
         self.remember_closure(&value);
         value
+    }
+
+    /// Create a generator object wrapping a suspended generator function. The
+    /// returned object exposes a `.next()` method that drives the body.
+    fn make_generator(
+        &mut self,
+        params: Vec<Pattern>,
+        body: Vec<Stmt>,
+        closure_env: Rc<RefCell<Env>>,
+        args: Vec<Value>,
+        this_value: Value,
+    ) -> Value {
+        let obj = Object::plain();
+        obj.borrow_mut().proto = Some(self.object_proto.clone());
+        Self::define_non_enumerable(
+            &obj,
+            "next",
+            self.native_method("Generator.prototype.next"),
+        );
+        let value = Value::Object(obj.clone());
+        self.generators.insert(
+            Rc::as_ptr(&obj) as usize,
+            GeneratorState {
+                params,
+                body,
+                closure_env,
+                args,
+                this_value,
+                yields_seen: 0,
+                noop: false,
+            },
+        );
+        value
+    }
+
+    /// Register a generator object created by the VM. It has no tree-walking
+    /// body, so `.next()` immediately reports completion.
+    pub(crate) fn register_noop_generator(&mut self, obj: &ObjectRef) {
+        self.generators.insert(
+            Rc::as_ptr(obj) as usize,
+            GeneratorState {
+                params: Vec::new(),
+                body: Vec::new(),
+                closure_env: self.env.clone(),
+                args: Vec::new(),
+                this_value: Value::Undefined,
+                yields_seen: 0,
+                noop: true,
+            },
+        );
+    }
+
+    /// Advance the generator identified by `key` by one `.next()` call,
+    /// returning the `{ value, done }` iterator result object.
+    fn resume_generator(&mut self, key: usize) -> JsResult<Value> {
+        let Some(state) = self.generators.remove(&key) else {
+            return Ok(Self::iterator_result(Value::Undefined, true));
+        };
+        if state.noop {
+            // VM-created generators have no runnable tree-walking body.
+            return Ok(Self::iterator_result(Value::Undefined, true));
+        }
+        let mut state = state;
+
+        let previous_env = self.env.clone();
+        self.env = Env::child(state.closure_env.clone());
+        self.env
+            .borrow_mut()
+            .define("this".into(), state.this_value.clone(), true);
+        // Bind parameters for this resume. Default-value expressions are
+        // re-evaluated on each resume (an accepted simplification).
+        let bind_result = (|| -> JsResult<()> {
+            for (index, pattern) in state.params.iter().enumerate() {
+                if let Pattern::Rest(inner) = pattern {
+                    let rest: Vec<Option<Value>> = state
+                        .args
+                        .iter()
+                        .skip(index)
+                        .map(|v| Some(v.clone()))
+                        .collect();
+                    let arr = Object::with_internal(Internal::Array(rest));
+                    arr.borrow_mut().proto = Some(self.array_proto.clone());
+                    self.bind_pattern(inner, Value::Object(arr), true)?;
+                    break;
+                }
+                let value = state
+                    .args
+                    .get(index)
+                    .cloned()
+                    .unwrap_or(Value::Undefined);
+                self.bind_pattern(pattern, value, true)?;
+            }
+            Ok(())
+        })();
+
+        if let Err(e) = bind_result {
+            self.env = previous_env;
+            return Err(e);
+        }
+
+        // Capture the (yields_seen+1)-th yield encountered during this run.
+        self.yield_target = Some(state.yields_seen);
+        self.yield_counter = 0;
+        self.pending_yield = None;
+        let result = self.eval_statements(&state.body);
+        self.yield_target = None;
+        self.pending_yield = None;
+        self.env = previous_env;
+
+        match result {
+            Ok(Flow::Yield(value)) => {
+                state.yields_seen += 1;
+                self.generators.insert(key, state);
+                Ok(Self::iterator_result(value, false))
+            }
+            Ok(Flow::Value(_)) | Ok(Flow::Return(_)) => {
+                // Completed generators are dropped; a later `.next()` on the
+                // stale object reports `{ value: undefined, done: true }`.
+                Ok(Self::iterator_result(Value::Undefined, true))
+            }
+            Ok(Flow::Throw(value)) => Err(JsError::runtime(value.to_string())),
+            Ok(Flow::Break) => Err(JsError::syntax_error("break used outside loop")),
+            Ok(Flow::Continue) => Err(JsError::syntax_error("continue used outside loop")),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Build an `{ value, done }` iterator-result object.
+    fn iterator_result(value: Value, done: bool) -> Value {
+        let obj = Object::plain();
+        obj.borrow_mut().props.insert("value".into(), value);
+        obj.borrow_mut().props.insert("done".into(), Value::Bool(done));
+        Value::Object(obj)
     }
 
     fn remember_closure(&mut self, function: &Value) {
@@ -1293,13 +1494,19 @@ impl Interpreter {
                 }
                 Ok(Value::Object(obj))
             }
-            Expr::Function { name: _, params, body } => Ok(self.make_function(params.clone(), body.clone())),
+            Expr::Function {
+                name: _,
+                params,
+                body,
+                generator,
+            } => Ok(self.make_function_async(params.clone(), body.clone(), false, *generator)),
             Expr::ArrowFunction { params, body } => {
                 let obj = Object::with_internal(Internal::Function {
                     params: params.clone(),
                     body: body.clone(),
                     func_index: 0,
                     is_async: false,
+                    generator: false,
                 });
                 obj.borrow_mut().proto = Some(self.function_proto.clone());
                 let proto = Object::plain();
@@ -1310,8 +1517,27 @@ impl Interpreter {
                 self.remember_closure(&value);
                 Ok(value)
             }
-            Expr::AsyncFunction { name: _, params, body } => {
-                Ok(self.make_function_async(params.clone(), body.clone(), true))
+            Expr::AsyncFunction {
+                name: _,
+                params,
+                body,
+                generator,
+            } => Ok(self.make_function_async(params.clone(), body.clone(), true, *generator)),
+            Expr::Yield(argument) => {
+                // Evaluate the yielded operand. If we are resuming a
+                // generator and this is the yield being awaited, record it in
+                // `pending_yield`; the enclosing statement then unwinds with
+                // `Flow::Yield`. Otherwise the value is discarded and
+                // execution continues to the next yield.
+                let value = self.eval_expr(argument)?;
+                if let Some(target) = self.yield_target {
+                    let index = self.yield_counter;
+                    self.yield_counter += 1;
+                    if index == target {
+                        self.pending_yield = Some(value.clone());
+                    }
+                }
+                Ok(value)
             }
             Expr::Await(expr) => {
                 // In a synchronous interpreter, `await` just evaluates the
@@ -1808,7 +2034,22 @@ impl Interpreter {
                 this_value,
                 if construct { Some(func) } else { None },
             ),
-            Internal::Function { params, body, .. } => {
+            Internal::Function {
+                params,
+                body,
+                generator,
+                ..
+            } => {
+                if generator {
+                    // Calling a generator does not run its body; instead it
+                    // returns a fresh suspended generator object.
+                    let closure_env = self
+                        .closures
+                        .get(&(Rc::as_ptr(&func) as usize))
+                        .cloned()
+                        .unwrap_or_else(|| self.env.clone());
+                    return Ok(self.make_generator(params, body, closure_env, args, this_value));
+                }
                 self.enter_call()?;
                 let previous = self.env.clone();
                 let closure_env = self
@@ -1886,6 +2127,7 @@ impl Interpreter {
                     Flow::Throw(v) => Ok(v).and_then(|v| Err(JsError::runtime(v.to_string()))),
                     Flow::Break => Err(JsError::syntax_error("break used outside loop")),
                     Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
+                    Flow::Yield(_) => Err(JsError::syntax_error("yield used outside generator")),
                 }
             }
             Internal::Bound {
@@ -1939,10 +2181,19 @@ impl Interpreter {
                     Ok(Flow::Value(v)) => Ok(v),
                     Ok(Flow::Return(v)) => Ok(v),
                     Ok(Flow::Throw(v)) => Err(JsError::runtime(v.to_string())),
-                    Ok(Flow::Break) => Err(JsError::syntax_error("break used outside loop")),
-                    Ok(Flow::Continue) => Err(JsError::syntax_error("continue used outside loop")),
-                    Err(e) => Err(e),
+                Ok(Flow::Break) => Err(JsError::syntax_error("break used outside loop")),
+                Ok(Flow::Continue) => Err(JsError::syntax_error("continue used outside loop")),
+                Ok(Flow::Yield(_)) => Err(JsError::syntax_error("yield used outside generator")),
+                Err(e) => Err(e),
                 }
+            }
+            "Generator.prototype.next" => {
+                // Drives a generator object created by `make_generator`.
+                if let Value::Object(generator) = &this_value {
+                    let key = Rc::as_ptr(generator) as usize;
+                    return self.resume_generator(key);
+                }
+                Ok(Self::iterator_result(Value::Undefined, true))
             }
             "Error" | "TypeError" | "SyntaxError" | "ReferenceError" | "RangeError" | "EvalError" | "URIError" => {
                 let obj = Object::plain();
@@ -2219,6 +2470,7 @@ impl Interpreter {
                     Flow::Throw(v) => Err(JsError::runtime(v.to_string())),
                     Flow::Break => Err(JsError::syntax_error("break used outside loop")),
                     Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
+                    Flow::Yield(_) => Err(JsError::syntax_error("yield used outside generator")),
                 }
             },
             "Function" => {

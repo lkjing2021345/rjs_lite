@@ -1063,3 +1063,42 @@ fn vm_parity_new_constructor() {
     assert_eq!(i, "7");
     assert_eq!(v, "7");
 }
+
+// --- Generator functions / methods ---
+
+#[test]
+fn generator_function_next_yields_values_in_order() {
+    let src = "function* g(){ yield 1; yield 2; } var it = g(); \
+               print(it.next().value); print(it.next().value); \
+               print(it.next().done); print(it.next().done);";
+    let out = run_cli(&["-e", src]);
+    assert_eq!(out, "1\n2\ntrue\ntrue");
+}
+
+#[test]
+fn named_generator_expression_runs() {
+    let src = "var f = function* named(){ yield 42; }; var it = f(); print(it.next().value);";
+    assert_eq!(run_cli(&["-e", src]), "42");
+}
+
+#[test]
+fn generator_method_in_object_literal_runs() {
+    let src = "var o = { *m(){ yield 7; yield 8; } }; var it = o.m(); \
+               print(it.next().value); print(it.next().value);";
+    assert_eq!(run_cli(&["-e", src]), "7\n8");
+}
+
+#[test]
+fn async_generator_parses_and_runs_without_error() {
+    let src = "async function* ag(){ yield 1; } var it = ag(); \
+               print(it.next().value); print(typeof ag);";
+    assert_eq!(run_cli(&["-e", src]), "1\nfunction");
+}
+
+#[test]
+fn vm_generator_does_not_crash() {
+    // The VM does not resume generator bodies yet; it must still parse and
+    // return a valid iterator-result object instead of panicking.
+    let src = "function* g(){ yield 1; } var it = g(); var r = it.next(); print(r.done);";
+    assert_eq!(run_cli(&["--vm", "-e", src]), "true");
+}
