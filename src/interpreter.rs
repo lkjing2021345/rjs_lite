@@ -1634,6 +1634,27 @@ impl Interpreter {
                             let v = self.eval_expr(e)?;
                             obj.borrow_mut().props.insert(key.clone(), v);
                         }
+                        // Accessor: `__accessor__<name>` — install as getter/setter.
+                        Some(key) if key.starts_with("__accessor__") => {
+                            let name = key.strip_prefix("__accessor__").unwrap_or("");
+                            let v = self.eval_expr(e)?;
+                            // Determine if it's a getter (no params) or setter (1 param).
+                            let is_getter = if let Value::Object(fobj) = &v {
+                                if let Internal::Function { params, .. } = &fobj.borrow().internal {
+                                    params.is_empty()
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+                            let accessor_key = if is_getter {
+                                format!("__get_{}", name)
+                            } else {
+                                format!("__set_{}", name)
+                            };
+                            Interpreter::define_non_enumerable(&obj, &accessor_key, v);
+                        }
                         // Normal key.
                         Some(key) => {
                             let v = self.eval_expr(e)?;

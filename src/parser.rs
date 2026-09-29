@@ -1346,6 +1346,52 @@ impl Parser {
                 }
                 continue;
             }
+            // Accessor: `get name() {}` or `set name(v) {}`.
+            // `get`/`set` are only accessors when followed by a property name
+            // (not `(` for a method named `get`, not `=` for a field).
+            if (self.at_ident("get") || self.at_ident("set"))
+                && self.next_is_property_name()
+            {
+                let is_getter = self.at_ident("get");
+                self.advance(); // consume `get`/`set`
+                // Property name (identifier, string, number, computed, or private).
+                let key = if self.at(&TokenKind::LeftBracket) {
+                    self.advance();
+                    let key_expr = self.expression()?;
+                    self.expect(&TokenKind::RightBracket)?;
+                    Some(format!("computed:{}", Self::key_expr_to_string(&key_expr)))
+                } else {
+                    match self.advance().clone().kind {
+                        TokenKind::Identifier(s) | TokenKind::String(s) => Some(s),
+                        TokenKind::Number(n) => Some(n.to_string()),
+                        TokenKind::PrivateName(s) => Some(s),
+                        _ => return Err(self.error("expected object property name")),
+                    }
+                };
+                self.expect(&TokenKind::LeftParen)?;
+                let params = if is_getter {
+                    self.expect(&TokenKind::RightParen)?;
+                    vec![]
+                } else {
+                    let param = self.param_pattern()?;
+                    self.expect(&TokenKind::RightParen)?;
+                    vec![param]
+                };
+                self.expect(&TokenKind::LeftBrace)?;
+                let body = self.block()?;
+                let k = key.clone().unwrap_or_default();
+                let value = Expr::Function { name: Some(k), params, body, generator: false };
+                // Mark as accessor so the interpreter can install it as a getter/setter.
+                props.push((Some(format!("__accessor__{}", key.unwrap_or_default())), value));
+                if self.eat(&TokenKind::RightBrace) {
+                    break;
+                }
+                self.expect(&TokenKind::Comma)?;
+                if self.eat(&TokenKind::RightBrace) {
+                    break;
+                }
+                continue;
+            }
             // Computed property: `[expr]: value`
             if self.at(&TokenKind::LeftBracket) {
                 self.advance(); // consume `[`
