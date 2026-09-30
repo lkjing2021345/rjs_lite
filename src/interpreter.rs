@@ -2792,17 +2792,18 @@ impl Interpreter {
                 let params: Vec<String> = args.iter().take(args.len().saturating_sub(1))
                     .map(|v| v.to_string())
                     .collect();
+                // Wrap the body in an anonymous function expression and parse it.
                 let code = if params.is_empty() {
-                    body
+                    format!("(function(){{ {} }})", body)
                 } else {
-                    format!("function({}){{ {} }}", params.join(","), body)
+                    format!("(function({}){{ {} }})", params.join(","), body)
                 };
                 let tokens = crate::lexer::lex(&code)
                     .map_err(|e| JsError::syntax_error(e.to_string()))?;
                 let program = crate::parser::parse(tokens)
                     .map_err(|e| JsError::syntax_error(e.to_string()))?;
                 for stmt in &program.statements {
-                    if let Stmt::FunctionDecl { params, body, .. } = stmt {
+                    if let Stmt::Expr(Expr::Function { params, body, .. }) = stmt {
                         return Ok(self.make_function(params.clone(), body.clone()));
                     }
                 }
