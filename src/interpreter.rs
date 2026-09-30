@@ -306,6 +306,13 @@ impl Interpreter {
             "bind",
             self.native_method("Function.prototype.bind"),
         );
+        if let Some(Value::Object(function_ctor)) = self.env.borrow().get("Function") {
+            Self::define_non_enumerable(
+                &function_ctor,
+                "prototype",
+                Value::Object(self.function_proto.clone()),
+            );
+        }
         self.array_proto.borrow_mut().proto = Some(self.object_proto.clone());
         self.error_proto.borrow_mut().proto = Some(self.object_proto.clone());
         self.string_proto.borrow_mut().proto = Some(self.object_proto.clone());
