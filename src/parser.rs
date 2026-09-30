@@ -655,6 +655,10 @@ impl Parser {
                 break;
             }
             self.expect(&TokenKind::Comma)?;
+            // Trailing comma in parameter list: `f(a, b,)`.
+            if self.eat(&TokenKind::RightParen) {
+                break;
+            }
         }
         Ok(params)
     }
@@ -1281,6 +1285,11 @@ impl Parser {
                 return self.arrow_body(params);
             }
             self.expect(&TokenKind::Comma)?;
+            // Trailing comma in arrow params: `(a, b,) => ...`
+            if self.eat(&TokenKind::RightParen) {
+                self.expect(&TokenKind::Arrow)?;
+                return self.arrow_body(params);
+            }
         }
     }
 
