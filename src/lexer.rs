@@ -31,11 +31,12 @@ impl Lexer {
             self.advance();
         }
         // Hashbang comment: `#!...` at the very start of the source.
+        // Terminated by any LineTerminator: LF, CR, LS (U+2028), PS (U+2029).
         if self.peek() == Some('#') && self.peek_next() == Some('!') {
             self.advance();
             self.advance();
             while let Some(c) = self.peek() {
-                if c == '\n' || c == '\r' {
+                if c == '\n' || c == '\r' || c == '\u{2028}' || c == '\u{2029}' {
                     break;
                 }
                 self.advance();
@@ -43,7 +44,7 @@ impl Lexer {
         }
         while let Some(ch) = self.peek() {
             match ch {
-                ' ' | '\t' | '\r' | '\n' => {
+                ' ' | '\t' | '\r' | '\n' | '\u{2028}' | '\u{2029}' => {
                     self.advance();
                 }
                 '0'..='9' => self.number()?,
