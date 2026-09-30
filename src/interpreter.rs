@@ -1860,6 +1860,7 @@ impl Interpreter {
                     UnaryOp::BitwiseNot => Ok(Value::Number(
                         !(value.to_number() as i32) as f64,
                     )),
+                    UnaryOp::Plus => Ok(Value::Number(value.to_number())),
                 }
             }
             Expr::Typeof(expr) => match expr.as_ref() {

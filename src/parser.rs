@@ -973,6 +973,12 @@ impl Parser {
                 op: UnaryOp::Negate,
                 expr: Box::new(self.unary()?),
             })
+        } else if self.eat(&TokenKind::Plus) {
+            // Unary plus: `+x` → `Number(x)`.
+            Ok(Expr::Unary {
+                op: UnaryOp::Plus,
+                expr: Box::new(self.unary()?),
+            })
         } else if self.eat(&TokenKind::Delete) {
             Ok(Expr::Unary {
                 op: UnaryOp::Delete,

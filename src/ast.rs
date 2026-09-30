@@ -251,6 +251,7 @@ pub enum UnaryOp {
     Delete,
     Void,
     BitwiseNot,
+    Plus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

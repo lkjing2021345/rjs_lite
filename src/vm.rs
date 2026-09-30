@@ -1108,6 +1108,7 @@ impl Vm {
             UnaryOp::Delete => Value::Bool(true),
             UnaryOp::Void => Value::Undefined,
             UnaryOp::BitwiseNot => Value::Number(!(operand.to_number() as i32) as f64),
+            UnaryOp::Plus => Value::Number(operand.to_number()),
         }
     }
 
