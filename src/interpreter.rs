@@ -1773,18 +1773,19 @@ impl Interpreter {
         let Value::Object(o) = value else {
             return Ok(Vec::new());
         };
-        let iter_method = self.get_property_on_value(value, "Symbol.iterator");
+        let iter_method = self.read_property(value, "Symbol.iterator")?;
         if iter_method.is_callable() {
             let iterator = self.call(iter_method, Vec::new(), value.clone(), false)?;
-            let next = self.get_property_on_value(&iterator, "next");
+            let next = self.read_property(&iterator, "next")?;
             let mut out = Vec::new();
             loop {
                 let step = self.call(next.clone(), Vec::new(), iterator.clone(), false)?;
-                let done = self.get_property_on_value(&step, "done").is_truthy();
+                // Getter-aware reads so poisoned accessors propagate.
+                let done = self.read_property(&step, "done")?.is_truthy();
                 if done {
                     break;
                 }
-                out.push(self.get_property_on_value(&step, "value"));
+                out.push(self.read_property(&step, "value")?);
             }
             return Ok(out);
         }
@@ -1956,16 +1957,17 @@ impl Interpreter {
             Pattern::ArrayPattern(elements) => {
                 // Prefer the iterator protocol when the source is iterable and
                 // not a plain array, so user iterators drive destructuring.
-                let custom = self
-                    .get_property_on_value(&value, "Symbol.iterator")
-                    .is_callable();
                 let is_plain_array = matches!(&value, Value::Object(o)
                     if matches!(o.borrow().internal, Internal::Array(_)));
-                if custom && !is_plain_array {
-                    let iter_method = self.get_property_on_value(&value, "Symbol.iterator");
+                let iter_method = if is_plain_array {
+                    Value::Undefined
+                } else {
+                    self.read_property(&value, "Symbol.iterator")?
+                };
+                if iter_method.is_callable() {
                     let iterator = self.call(iter_method, Vec::new(), value.clone(), false)?;
-                    let next = self.get_property_on_value(&iterator, "next");
-                    let ret = self.get_property_on_value(&iterator, "return");
+                    let next = self.read_property(&iterator, "next")?;
+                    let ret = self.read_property(&iterator, "return")?;
                     let mut done = false;
                     let mut has_rest = false;
                     let outcome = (|| -> JsResult<()> {
@@ -1976,11 +1978,11 @@ impl Interpreter {
                                 loop {
                                     let step =
                                         self.call(next.clone(), Vec::new(), iterator.clone(), false)?;
-                                    if self.get_property_on_value(&step, "done").is_truthy() {
+                                    if self.read_property(&step, "done")?.is_truthy() {
                                         done = true;
                                         break;
                                     }
-                                    rest.push(Some(self.get_property_on_value(&step, "value")));
+                                    rest.push(Some(self.read_property(&step, "value")?));
                                 }
                                 let arr = Object::with_internal(Internal::Array(rest));
                                 arr.borrow_mut().proto = Some(self.array_proto.clone());
@@ -1989,13 +1991,13 @@ impl Interpreter {
                             }
                             let step =
                                 self.call(next.clone(), Vec::new(), iterator.clone(), false)?;
-                            if self.get_property_on_value(&step, "done").is_truthy() {
+                            if self.read_property(&step, "done")?.is_truthy() {
                                 done = true;
                             }
                             let item = if done {
                                 Value::Undefined
                             } else {
-                                self.get_property_on_value(&step, "value")
+                                self.read_property(&step, "value")?
                             };
                             self.bind_pattern(element, item, mutable)?;
                         }
