@@ -2967,18 +2967,22 @@ impl Interpreter {
                 }
                 self.enter_call()?;
                 let is_arrow = func.borrow().props.contains_key("__arrow");
-                // Arrows capture the enclosing `this` lexically.
-                let lexical_this = if is_arrow {
-                    self.env.borrow().get("this")
-                } else {
-                    None
-                };
                 let previous = self.env.clone();
                 let closure_env = self
                     .closures
                     .get(&(Rc::as_ptr(&func) as usize))
                     .cloned()
                     .unwrap_or_else(|| previous.clone());
+                // Arrows capture `this` from where they were defined (their
+                // closure), ignoring the call-site receiver.
+                let lexical_this = if is_arrow {
+                    closure_env
+                        .borrow()
+                        .get("this")
+                        .or_else(|| self.env.borrow().get("this"))
+                } else {
+                    None
+                };
                 self.env = Env::child(closure_env);
                 let this_obj = if let Some(t) = lexical_this {
                     t
@@ -3051,7 +3055,17 @@ impl Interpreter {
                 self.env = previous;
                 self.leave_call();
                 match result? {
-                    Flow::Value(v) | Flow::Return(v) => {
+                    Flow::Value(v) => {
+                        if construct {
+                            // No explicit return: the new object is the result.
+                            Ok(this_obj)
+                        } else if is_async {
+                            Ok(self.make_promise(v, true))
+                        } else {
+                            Ok(v)
+                        }
+                    }
+                    Flow::Return(v) => {
                         if construct {
                             if matches!(v, Value::Object(_)) {
                                 Ok(v)
@@ -3059,7 +3073,6 @@ impl Interpreter {
                                 Ok(this_obj)
                             }
                         } else if is_async {
-                            // `async function` resolves its return value.
                             Ok(self.make_promise(v, true))
                         } else {
                             Ok(v)
