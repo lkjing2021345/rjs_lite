@@ -2254,6 +2254,8 @@ impl Interpreter {
                     .count();
                 Self::define_non_enumerable(&obj, "length", Value::Number(arity as f64));
                 Self::define_function_name(&obj, "");
+                // Arrow functions capture `this`/`super` lexically.
+                Self::define_non_enumerable(&obj, "__arrow", Value::Bool(true));
                 let value = Value::Object(obj.clone());
                 self.remember_closure(&value);
                 Ok(value)
@@ -2934,6 +2936,13 @@ impl Interpreter {
                     return Ok(generator_obj);
                 }
                 self.enter_call()?;
+                let is_arrow = func.borrow().props.contains_key("__arrow");
+                // Arrows capture the enclosing `this` lexically.
+                let lexical_this = if is_arrow {
+                    self.env.borrow().get("this")
+                } else {
+                    None
+                };
                 let previous = self.env.clone();
                 let closure_env = self
                     .closures
@@ -2941,7 +2950,9 @@ impl Interpreter {
                     .cloned()
                     .unwrap_or_else(|| previous.clone());
                 self.env = Env::child(closure_env);
-                let this_obj = if construct {
+                let this_obj = if let Some(t) = lexical_this {
+                    t
+                } else if construct {
                     let obj = Object::plain();
                     if let Some(Value::Object(proto)) =
                         func.borrow().props.get("prototype").cloned()
