@@ -485,6 +485,11 @@ impl Interpreter {
             );
             Self::define_non_enumerable(
                 &self.array_proto,
+                "toString",
+                self.native_method("Array.prototype.toString"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
                 "indexOf",
                 self.native_method("Array.prototype.indexOf"),
             );
@@ -787,6 +792,14 @@ impl Interpreter {
         Self::define_non_enumerable(&self.boolean_proto, "toString", self.native_method("Boolean.prototype.toString"));
         Self::define_non_enumerable(&self.boolean_proto, "valueOf", self.native_method("Boolean.prototype.valueOf"));
         Self::define_non_enumerable(&self.error_proto, "toString", self.native_method("Error.prototype.toString"));
+        self.error_proto
+            .borrow_mut()
+            .props
+            .insert("name".into(), Value::String("Error".into()));
+        self.error_proto
+            .borrow_mut()
+            .props
+            .insert("message".into(), Value::String(String::new()));
         self.define_native("Symbol");
         if let Some(Value::Object(sym_ctor)) = self.env.borrow().get("Symbol") {
             let toStringTag = Value::String("Symbol.toStringTag".into());
@@ -858,11 +871,46 @@ impl Interpreter {
         index.clamp(0, len)
     }
 
+    /// Render a thrown value as a human-readable message: honours a JS
+    /// `toString`/`name`+`message`, falling back to the default rendering.
+    fn throw_to_string(&mut self, v: &Value) -> String {
+        if let Value::Object(_) = v {
+            let rendered = self.to_string_value(v).unwrap_or_else(|_| v.to_string());
+            if rendered != "[object Object]" {
+                return rendered;
+            }
+            let Value::Object(o) = v else { unreachable!() };
+            let obj = o.borrow();
+            let name = obj.props.get("name").map(|n| n.to_string());
+            let message = obj.props.get("message").map(|m| m.to_string());
+            return match (name, message) {
+                (Some(n), Some(m)) if !m.is_empty() => format!("{n}: {m}"),
+                (Some(n), _) => n,
+                (None, Some(m)) => m,
+                _ => "[object Object]".into(),
+            };
+        }
+        v.to_string()
+    }
+
     pub fn run(&mut self, program: &Program) -> JsResult<Value> {
         self.detect_strict_mode(&program.statements);
-        match self.eval_statements(&program.statements)? {
+        // A `throw` may surface either as `Flow::Throw` or, when it crosses a
+        // function boundary, as `JsError::Flow(Flow::Throw(_))`.
+        let (flow, propagated) = match self.eval_statements(&program.statements) {
+            Ok(flow) => (flow, None),
+            Err(JsError::Flow(flow)) => (flow, None),
+            Err(e) => (Flow::Value(Value::Undefined), Some(e)),
+        };
+        if let Some(e) = propagated {
+            return Err(e);
+        }
+        match flow {
             Flow::Value(v) | Flow::Return(v) => Ok(v),
-            Flow::Throw(v) => Err(JsError::runtime(v.to_string())),
+            Flow::Throw(v) => {
+                let msg = self.throw_to_string(&v);
+                Err(JsError::runtime(msg))
+            }
             Flow::Break => Err(JsError::syntax_error("break used outside loop")),
             Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
             Flow::Yield(_) => Err(JsError::syntax_error("yield used outside generator")),
@@ -1500,6 +1548,58 @@ impl Interpreter {
         if let Value::Object(obj) = function {
             self.closures
                 .insert(Rc::as_ptr(obj) as usize, self.env.clone());
+        }
+    }
+
+    /// ECMAScript ToPrimitive: for objects, try `valueOf` then `toString`
+    /// (calling user-defined methods), falling back to the object itself.
+    pub(crate) fn to_primitive_value(&mut self, value: &Value) -> JsResult<Value> {
+        if !matches!(value, Value::Object(_)) {
+            return Ok(value.clone());
+        }
+        for name in ["valueOf", "toString"] {
+            let method = self.get_property_on_value(value, name);
+            if method.is_callable() {
+                let r = self.call(method, Vec::new(), value.clone(), false)?;
+                if !matches!(r, Value::Object(_)) {
+                    return Ok(r);
+                }
+            }
+        }
+        // No usable primitive; fall back to implementation-defined string.
+        Ok(Value::String(value.to_string()))
+    }
+
+    /// ECMAScript abstract equality (`==`) including object→primitive coercion.
+    fn abstract_eq_js(&mut self, a: &Value, b: &Value) -> JsResult<bool> {
+        match (a, b) {
+            (Value::Object(_), Value::Object(_)) => Ok(a == b),
+            (Value::Object(_), Value::Null | Value::Undefined) => Ok(false),
+            (Value::Null | Value::Undefined, Value::Object(_)) => Ok(false),
+            (Value::Object(_), _) => {
+                let p = self.to_primitive_value(a)?;
+                self.abstract_eq_js(&p, b)
+            }
+            (_, Value::Object(_)) => {
+                let p = self.to_primitive_value(b)?;
+                self.abstract_eq_js(a, &p)
+            }
+            _ => Ok(a.abstract_eq(b)),
+        }
+    }
+
+    /// ECMAScript ToString, honouring user-defined `toString`/`valueOf`.
+    pub(crate) fn to_string_value(&mut self, value: &Value) -> JsResult<String> {
+        match value {
+            Value::Object(_) => {
+                let prim = self.to_primitive_value(value)?;
+                Ok(if matches!(prim, Value::Object(_)) {
+                    value.to_string()
+                } else {
+                    prim.to_string()
+                })
+            }
+            other => Ok(other.to_string()),
         }
     }
 
@@ -2347,19 +2447,24 @@ impl Interpreter {
             .unwrap_or(Value::Undefined)
     }
 
-    fn binary(&self, left: Value, op: BinaryOp, right: Value) -> JsResult<Value> {
+    fn binary(&mut self, left: Value, op: BinaryOp, right: Value) -> JsResult<Value> {
         match op {
-            BinaryOp::Add => match (left, right) {
-                (Value::String(a), b) => Ok(Value::String(a + &b.to_string())),
-                (a, Value::String(b)) => Ok(Value::String(a.to_string() + &b)),
-                (a, b) => Ok(Value::Number(a.to_number() + b.to_number())),
-            },
+            BinaryOp::Add => {
+                // ToPrimitive both sides first (string concat vs numeric add).
+                let lp = self.to_primitive_value(&left)?;
+                let rp = self.to_primitive_value(&right)?;
+                match (&lp, &rp) {
+                    (Value::String(a), b) => Ok(Value::String(a.clone() + &b.to_string())),
+                    (a, Value::String(b)) => Ok(Value::String(a.to_string() + b)),
+                    (a, b) => Ok(Value::Number(a.to_number() + b.to_number())),
+                }
+            }
             BinaryOp::Subtract => Ok(Value::Number(left.to_number() - right.to_number())),
             BinaryOp::Multiply => Ok(Value::Number(left.to_number() * right.to_number())),
             BinaryOp::Divide => Ok(Value::Number(left.to_number() / right.to_number())),
             BinaryOp::Remainder => Ok(Value::Number(left.to_number() % right.to_number())),
-            BinaryOp::Equal => Ok(Value::Bool(left.abstract_eq(&right))),
-            BinaryOp::NotEqual => Ok(Value::Bool(!left.abstract_eq(&right))),
+            BinaryOp::Equal => Ok(Value::Bool(self.abstract_eq_js(&left, &right)?)),
+            BinaryOp::NotEqual => Ok(Value::Bool(!self.abstract_eq_js(&left, &right)?)),
             BinaryOp::StrictEqual => Ok(Value::Bool(left == right)),
             BinaryOp::StrictNotEqual => Ok(Value::Bool(left != right)),
             BinaryOp::Less => Ok(Value::Bool(left.to_number() < right.to_number())),
@@ -2545,7 +2650,7 @@ impl Interpreter {
                             Ok(v)
                         }
                     }
-                    Flow::Throw(v) => Ok(v).and_then(|v| Err(JsError::runtime(v.to_string()))),
+                    Flow::Throw(v) => Err(JsError::Flow(Flow::Throw(v))),
                     Flow::Break => Err(JsError::syntax_error("break used outside loop")),
                     Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
                     Flow::Yield(_) => Err(JsError::syntax_error("yield used outside generator")),
@@ -2573,12 +2678,9 @@ impl Interpreter {
     ) -> JsResult<Value> {
         match name {
             "print" => {
-                self.push_output(
-                    args.first()
-                        .cloned()
-                        .unwrap_or(Value::Undefined)
-                        .to_string(),
-                );
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                let s = self.to_string_value(&v)?;
+                self.push_output(s);
                 Ok(Value::Undefined)
             }
             "eval" => {
@@ -2601,7 +2703,7 @@ impl Interpreter {
                 match result {
                     Ok(Flow::Value(v)) => Ok(v),
                     Ok(Flow::Return(v)) => Ok(v),
-                    Ok(Flow::Throw(v)) => Err(JsError::runtime(v.to_string())),
+                    Ok(Flow::Throw(v)) => Err(JsError::Flow(Flow::Throw(v))),
                 Ok(Flow::Break) => Err(JsError::syntax_error("break used outside loop")),
                 Ok(Flow::Continue) => Err(JsError::syntax_error("continue used outside loop")),
                 Ok(Flow::Yield(_)) => Err(JsError::syntax_error("yield used outside generator")),
@@ -2628,6 +2730,10 @@ impl Interpreter {
                         .cloned()
                         .unwrap_or(Value::String(String::new())),
                 );
+                // Own `constructor` so `err.constructor === TypeError` holds.
+                if let Some(ctor) = self.env.borrow().get(name) {
+                    obj.borrow_mut().props.insert("constructor".into(), ctor);
+                }
                 Ok(Value::Object(obj))
             }
             "Object" => {
@@ -2834,12 +2940,10 @@ impl Interpreter {
                 );
                 Ok(Value::Bool(is_array))
             }
-            "String" => Ok(Value::String(
-                args.first()
-                    .cloned()
-                    .unwrap_or(Value::Undefined)
-                    .to_string(),
-            )),
+            "String" => {
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                Ok(Value::String(self.to_string_value(&v)?))
+            }
             "Number" => Ok(Value::Number(
                 args.first()
                     .cloned()
@@ -2888,7 +2992,9 @@ impl Interpreter {
                     .map_err(|e| JsError::syntax_error(e.to_string()))?;
                 match self.eval_statements(&program.statements)? {
                     Flow::Value(v) | Flow::Return(v) => Ok(v),
-                    Flow::Throw(v) => Err(JsError::runtime(v.to_string())),
+                    // Re-throw the original value so an enclosing try/catch
+                    // receives it unchanged.
+                    Flow::Throw(v) => Err(JsError::Flow(Flow::Throw(v))),
                     Flow::Break => Err(JsError::syntax_error("break used outside loop")),
                     Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
                     Flow::Yield(_) => Err(JsError::syntax_error("yield used outside generator")),
@@ -2989,13 +3095,9 @@ impl Interpreter {
             }
             "Object.prototype.valueOf" => Ok(this_value.clone()),
             "Object.prototype.toLocaleString" => {
-                // Delegate to toString per spec §19.1.3.19
-                Ok(self.call_native(
-                    "Object.prototype.toString",
-                    Vec::new(),
-                    this_value.clone(),
-                    None,
-                )?)
+                // Delegate to the receiver's own/inherited `toString`.
+                let method = self.get_property_on_value(&this_value, "toString");
+                self.call(method, Vec::new(), this_value.clone(), false)
             }
             "Object.prototype.isPrototypeOf" => {
                 let receiver = args.first().cloned().unwrap_or(Value::Undefined);
@@ -3015,6 +3117,23 @@ impl Interpreter {
                     current = obj.borrow().proto.clone();
                 }
                 Ok(Value::Bool(false))
+            }
+            "Array.prototype.toString" => {
+                // Array.prototype.toString === join with "," separator.
+                if let Value::Object(o) = &this_value
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    let mut parts = Vec::with_capacity(items.len());
+                    for v in items {
+                        let s = match v {
+                            None | Some(Value::Null) | Some(Value::Undefined) => String::new(),
+                            Some(other) => self.to_string_value(other)?,
+                        };
+                        parts.push(s);
+                    }
+                    return Ok(Value::String(parts.join(",")));
+                }
+                Ok(Value::String(String::new()))
             }
             "Array.prototype.join" => {
                 let sep = args
