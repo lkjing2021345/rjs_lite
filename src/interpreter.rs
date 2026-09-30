@@ -1142,7 +1142,13 @@ impl Interpreter {
             Stmt::Break => Ok(Flow::Break),
             Stmt::Continue | Stmt::LabeledContinue { .. } => Ok(Flow::Continue),
             Stmt::LabeledBreak { .. } => Ok(Flow::Break),
-            Stmt::Labeled { body, .. } => self.eval_stmt(body),
+            // A labeled statement catches a `break` targeting its own label
+            // (e.g. `label: { break label; }`). Loops catch their own breaks
+            // first, so this only consumes breaks that would otherwise leak.
+            Stmt::Labeled { body, .. } => match self.eval_stmt(body)? {
+                Flow::Break => Ok(Flow::Value(Value::Undefined)),
+                other => Ok(other),
+            },
             Stmt::Block(stmts) => self.with_child(stmts),
             Stmt::Expr(expr) => Ok(Flow::Value(self.eval_expr(expr)?)),
             Stmt::With { expression, body } => {
