@@ -52,6 +52,8 @@ impl Lexer {
                 '.' if self.peek_next().is_some_and(|x| x.is_ascii_digit()) => self.number()?,
                 '"' | '\'' => self.string(ch)?,
                 c if is_ident_start(c) => self.identifier(),
+                // Identifier starting with a unicode escape: `\u0061bc`.
+                '\\' if self.peek_next() == Some('u') => self.identifier(),
                 '+' => self.plus(),
                 '-' => self.minus(),
                 '*' => self.op_assign(TokenKind::Star, TokenKind::StarAssign),
@@ -565,12 +567,65 @@ impl Lexer {
     fn identifier(&mut self) {
         let (s, l, c) = (self.byte, self.line, self.column);
         let mut text = String::new();
-        while let Some(ch) = self.peek().filter(|x| is_ident_part(*x)) {
-            text.push(ch);
-            self.advance();
+        let mut escaped = false;
+        loop {
+            if let Some(ch) = self.peek().filter(|x| is_ident_part(*x)) {
+                text.push(ch);
+                self.advance();
+            } else if self.peek() == Some('\\') && self.peek_next() == Some('u') {
+                if let Some(ch) = self.unicode_escape() {
+                    text.push(ch);
+                    escaped = true;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
         }
-        self.tokens
-            .push(Token::new(keyword_or_identifier(text), self.span(s, l, c)));
+        let kind = if escaped {
+            // An escaped identifier (e.g. `\u0062reak`) is never a keyword.
+            TokenKind::Identifier(text)
+        } else {
+            keyword_or_identifier(text)
+        };
+        self.tokens.push(Token::new(kind, self.span(s, l, c)));
+    }
+
+    /// Consume `\uXXXX` or `\u{XXXX}` and return the decoded character.
+    fn unicode_escape(&mut self) -> Option<char> {
+        self.advance(); // `\`
+        self.advance(); // `u`
+        if self.peek() == Some('{') {
+            self.advance();
+            let mut hex = String::new();
+            while let Some(ch) = self.peek() {
+                if ch == '}' {
+                    break;
+                }
+                if !ch.is_ascii_hexdigit() {
+                    return None;
+                }
+                hex.push(ch);
+                self.advance();
+            }
+            if self.peek() != Some('}') {
+                return None;
+            }
+            self.advance(); // `}`
+            u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
+        } else {
+            let mut hex = String::new();
+            for _ in 0..4 {
+                let ch = self.peek()?;
+                if !ch.is_ascii_hexdigit() {
+                    return None;
+                }
+                hex.push(ch);
+                self.advance();
+            }
+            u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
+        }
     }
 
     /// Lex a private name such as `#field`. The leading `#` is stored as part
