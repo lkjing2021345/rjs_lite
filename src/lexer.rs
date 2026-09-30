@@ -425,7 +425,14 @@ impl Lexer {
             text.push(d);
             self.advance();
         }
-        if self.peek() == Some('.') && self.peek_next().is_some_and(|x| x.is_ascii_digit()) {
+        // Consume a trailing dot: `1.` or `1.5`. The dot is only consumed if
+        // it is NOT followed by an identifier-start char (which would make it
+        // a member access like `1.toString()`).
+        if self.peek() == Some('.')
+            && !self
+                .peek_next()
+                .is_some_and(|x| x.is_alphabetic() || x == '_' || x == '$')
+        {
             text.push('.');
             self.advance();
             while let Some(d) = self.peek().filter(|x| x.is_ascii_digit()) {

@@ -1426,7 +1426,7 @@ impl Parser {
                 self.advance();
                 is_generator = true;
             } else if self.at(&TokenKind::Async)
-                && self.next_is_property_name()
+                && (self.next_is_property_name() || self.next_is(&TokenKind::Star))
             {
                 self.advance();
                 is_async = true;
