@@ -40,6 +40,10 @@ impl Parser {
     }
 
     fn statement(&mut self) -> JsResult<Stmt> {
+        // Empty statement: `;`
+        if self.eat(&TokenKind::Semicolon) {
+            return Ok(Stmt::Expr(Expr::Undefined));
+        }
         if self.eat(&TokenKind::Let) || self.eat(&TokenKind::Var) {
             self.var_decl(true)
         } else if self.eat(&TokenKind::Const) {
