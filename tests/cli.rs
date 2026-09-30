@@ -1090,8 +1090,10 @@ fn generator_method_in_object_literal_runs() {
 
 #[test]
 fn async_generator_parses_and_runs_without_error() {
+    // `.next()` on an async generator returns a Promise resolving to the
+    // iterator result.
     let src = "async function* ag(){ yield 1; } var it = ag(); \
-               print(it.next().value); print(typeof ag);";
+               it.next().then(function(r){ print(r.value); }); print(typeof ag);";
     assert_eq!(run_cli(&["-e", src]), "1\nfunction");
 }
 
