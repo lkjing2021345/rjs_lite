@@ -48,6 +48,8 @@ impl Lexer {
                     self.advance();
                 }
                 '0'..='9' => self.number()?,
+                // Leading-dot number literal: `.5`
+                '.' if self.peek_next().is_some_and(|x| x.is_ascii_digit()) => self.number()?,
                 '"' | '\'' => self.string(ch)?,
                 c if is_ident_start(c) => self.identifier(),
                 '+' => self.plus(),
@@ -97,6 +99,9 @@ impl Lexer {
     }
     fn peek_next(&self) -> Option<char> {
         self.chars.get(self.index + 1).copied()
+    }
+    fn peek_at(&self, offset: usize) -> Option<char> {
+        self.chars.get(self.index + offset).copied()
     }
     fn advance(&mut self) -> Option<char> {
         let ch = self.peek()?;
@@ -422,6 +427,25 @@ impl Lexer {
     fn number(&mut self) -> JsResult<()> {
         let (s, l, c) = (self.byte, self.line, self.column);
         let mut text = String::new();
+        // Radix prefixes: 0x/0X (hex), 0o/0O (octal), 0b/0B (binary).
+        if self.peek() == Some('0') {
+            match self.peek_next() {
+                Some('x') | Some('X') => {
+                    return self.radix_number(16, s, l, c);
+                }
+                Some('o') | Some('O') => {
+                    return self.radix_number(8, s, l, c);
+                }
+                Some('b') | Some('B') => {
+                    return self.radix_number(2, s, l, c);
+                }
+                _ => {}
+            }
+        }
+        // Leading dot: `.5`
+        if self.peek() == Some('.') && self.peek_next().is_some_and(|x| x.is_ascii_digit()) {
+            text.push('0');
+        }
         while let Some(d) = self.peek().filter(|x| x.is_ascii_digit()) {
             text.push(d);
             self.advance();
@@ -441,6 +465,25 @@ impl Lexer {
                 self.advance();
             }
         }
+        // Exponent part: `1e0`, `1.5e-10`, `2E+3`.
+        if matches!(self.peek(), Some('e') | Some('E')) {
+            let mut look = 1usize;
+            if matches!(self.peek_at(look), Some('+') | Some('-')) {
+                look += 1;
+            }
+            if self.peek_at(look).is_some_and(|x| x.is_ascii_digit()) {
+                text.push(self.peek().unwrap());
+                self.advance();
+                if matches!(self.peek(), Some('+') | Some('-')) {
+                    text.push(self.peek().unwrap());
+                    self.advance();
+                }
+                while let Some(d) = self.peek().filter(|x| x.is_ascii_digit()) {
+                    text.push(d);
+                    self.advance();
+                }
+            }
+        }
         // BigInt literal: digits followed by `n` (e.g. `1n`, `0x1Fn`).
         // A `.` was not consumed, so a float can never be a BigInt.
         if self.peek() == Some('n') {
@@ -451,6 +494,40 @@ impl Lexer {
         }
         let n = text
             .parse()
+            .map_err(|_| JsError::lex("invalid number", self.span(s, l, c)))?;
+        self.tokens
+            .push(Token::new(TokenKind::Number(n), self.span(s, l, c)));
+        Ok(())
+    }
+
+    /// Lex a `0x`/`0o`/`0b`-prefixed integer literal (or BigInt).
+    fn radix_number(&mut self, radix: u32, s: usize, l: usize, c: usize) -> JsResult<()> {
+        self.advance(); // `0`
+        self.advance(); // `x` / `o` / `b`
+        let mut digits = String::new();
+        while let Some(ch) = self.peek() {
+            if ch.is_digit(radix) {
+                digits.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if digits.is_empty() {
+            return Err(JsError::lex("invalid number", self.span(s, l, c)));
+        }
+        if self.peek() == Some('n') {
+            self.advance();
+            // Normalize the radix digits to a decimal string.
+            let dec = u128::from_str_radix(&digits, radix)
+                .map(|v| v.to_string())
+                .unwrap_or(digits);
+            self.tokens
+                .push(Token::new(TokenKind::BigInt(dec), self.span(s, l, c)));
+            return Ok(());
+        }
+        let n = u128::from_str_radix(&digits, radix)
+            .map(|v| v as f64)
             .map_err(|_| JsError::lex("invalid number", self.span(s, l, c)))?;
         self.tokens
             .push(Token::new(TokenKind::Number(n), self.span(s, l, c)));
