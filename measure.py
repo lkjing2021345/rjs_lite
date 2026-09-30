@@ -41,7 +41,12 @@ def run(path):
     if 'raw' in fl:
         code = src
     else:
-        parts = [STA, ASSERT]
+        parts = []
+        # test262 `onlyStrict` tests are made strict by a leading directive.
+        if 'onlyStrict' in fl:
+            parts.append('"use strict";')
+        parts.append(STA)
+        parts.append(ASSERT)
         if 'async' in fl:
             parts.append(load_include('doneprintHandle.js'))
         for i in incs:
@@ -85,12 +90,35 @@ with concurrent.futures.ThreadPoolExecutor(32) as ex:
 
 cnt = collections.Counter()
 real_bugs = []
+runtime_bugs = []
 for path, phase, msg, neg in results:
     cnt[phase] += 1
     if phase == 'parse' and not neg:
         real_bugs.append(msg)
+    if phase == 'runtime' and not neg:
+        runtime_bugs.append(msg)
 print('phases:', dict(cnt))
 print('REAL parse bugs (non-negative):', len(real_bugs))
 c = collections.Counter(real_bugs)
 for m, n in c.most_common(10):
-    print(f'  {n:4d}  {m}')
+    print(f'  P {n:4d}  {m}')
+print('REAL runtime bugs (non-negative):', len(runtime_bugs))
+rc = collections.Counter(runtime_bugs)
+for m, n in rc.most_common(15):
+    print(f'  R {n:4d}  {m}')
+
+if len(sys.argv) > 2:
+    needle = sys.argv[2]
+    shown = 0
+    limit = 100 if needle == '*' else 15
+    only_parse = len(sys.argv) > 3 and sys.argv[3] == 'parse'
+    for path, phase, msg, neg in results:
+        if neg or phase not in ('parse', 'runtime'):
+            continue
+        if only_parse and phase != 'parse':
+            continue
+        if needle == '*' or needle in msg:
+            print('  FAIL', os.path.relpath(path), '::', msg)
+            shown += 1
+            if shown >= limit:
+                break

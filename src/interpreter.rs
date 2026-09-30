@@ -1259,10 +1259,17 @@ impl Interpreter {
         self.make_function_async(params, body, false, false)
     }
 
+    /// Define the `name` own property (non-writable, non-enumerable,
+    /// configurable) per §10.2.9 SetFunctionName.
+    fn define_function_name(obj: &ObjectRef, name: &str) {
+        Self::define_non_enumerable(obj, "name", Value::String(name.to_string()));
+        obj.borrow_mut().non_enumerable_props.insert("__writable_name".into());
+    }
+
     /// Set a non-enumerable `name` own property on a function value.
     pub(crate) fn set_function_name(value: &Value, name: &str) {
         if let Value::Object(obj) = value {
-            Self::define_non_enumerable(obj, "name", Value::String(name.to_string()));
+            Self::define_function_name(obj, name);
         }
     }
 
@@ -1283,7 +1290,7 @@ impl Interpreter {
             .map(|n| n.to_string().is_empty())
             .unwrap_or(true);
         if is_anonymous {
-            Self::define_non_enumerable(obj, "name", Value::String(name.to_string()));
+            Self::define_function_name(obj, name);
         }
     }
 
@@ -1311,7 +1318,7 @@ impl Interpreter {
         Self::define_non_enumerable(&proto, "constructor", Value::Object(obj.clone()));
         Self::define_non_enumerable(&obj, "prototype", Value::Object(proto));
         Self::define_non_enumerable(&obj, "length", Value::Number(arity as f64));
-        Self::define_non_enumerable(&obj, "name", Value::String(String::new()));
+        Self::define_function_name(&obj, "");
         let value = Value::Object(obj.clone());
         self.remember_closure(&value);
         value
@@ -2006,7 +2013,7 @@ impl Interpreter {
                     .take_while(|p| !matches!(p, Pattern::Rest(_)))
                     .count();
                 Self::define_non_enumerable(&obj, "length", Value::Number(arity as f64));
-                Self::define_non_enumerable(&obj, "name", Value::String(String::new()));
+                Self::define_function_name(&obj, "");
                 let value = Value::Object(obj.clone());
                 self.remember_closure(&value);
                 Ok(value)
@@ -2460,6 +2467,14 @@ impl Interpreter {
             }
         }
         let mut object = object.borrow_mut();
+        // A non-writable own data property silently ignores assignment.
+        if object.props.contains_key(property)
+            && object
+                .non_enumerable_props
+                .contains(&("__writable_".to_string() + property))
+        {
+            return;
+        }
         object.props.insert(property.to_string(), value);
         // A plain-object assignment shadows a prototype property; the property
         // is now own+enumerable, so drop any inherited non-enumerable marker.
