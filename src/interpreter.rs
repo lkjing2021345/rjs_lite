@@ -1675,13 +1675,26 @@ impl Interpreter {
                 .get(name)
                 .ok_or_else(|| JsError::reference_error(format!("{name} is not defined"))),
             Expr::Array(items) => {
-                let values: Vec<Option<Value>> = items
-                    .iter()
-                    .map(|e| match e {
-                        None => Ok(None),
-                        Some(expr) => self.eval_expr(expr).map(Some),
-                    })
-                    .collect::<JsResult<Vec<_>>>()?;
+                let mut values: Vec<Option<Value>> = Vec::with_capacity(items.len());
+                for e in items {
+                    match e {
+                        None => values.push(None),
+                        // Spread element: `[...iterable]` — flatten arrays.
+                        Some(Expr::Spread(inner)) => {
+                            let v = self.eval_expr(inner)?;
+                            if let Value::Object(o) = &v {
+                                if let Internal::Array(items) = &o.borrow().internal {
+                                    for item in items {
+                                        values.push(Some(item.clone().unwrap_or(Value::Undefined)));
+                                    }
+                                    continue;
+                                }
+                            }
+                            values.push(Some(v));
+                        }
+                        Some(expr) => values.push(Some(self.eval_expr(expr)?)),
+                    }
+                }
                 let obj = Object::with_internal(Internal::Array(values));
                 obj.borrow_mut().proto = Some(self.array_proto.clone());
                 Ok(Value::Object(obj))

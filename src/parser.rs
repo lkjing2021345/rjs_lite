@@ -1405,6 +1405,9 @@ impl Parser {
             // Elision: `,` or `]` after a comma (or at start) means a hole.
             if self.at(&TokenKind::Comma) || self.at(&TokenKind::RightBracket) {
                 items.push(None);
+            } else if self.eat(&TokenKind::DotDotDot) {
+                // Spread element: `[...iterable]`
+                items.push(Some(Expr::Spread(Box::new(self.assignment()?))));
             } else {
                 items.push(Some(self.expression()?));
             }
