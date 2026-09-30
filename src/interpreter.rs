@@ -2789,6 +2789,36 @@ impl Interpreter {
                     .unwrap_or(Value::Undefined);
             }
         }
+        // Accessor property: report `get`/`set` instead of `value`.
+        let getter = object
+            .props
+            .get(&format!("__get_{property}"))
+            .cloned();
+        let setter = object
+            .props
+            .get(&format!("__set_{property}"))
+            .cloned();
+        if getter.is_some() || setter.is_some() {
+            let enumerable = !object.non_enumerable_props.contains(property);
+            let configurable = !object
+                .non_enumerable_props
+                .contains(&("__configurable_".to_string() + property));
+            let desc = Object::plain();
+            let undef = Value::Undefined;
+            desc.borrow_mut()
+                .props
+                .insert("get".into(), getter.unwrap_or(undef.clone()));
+            desc.borrow_mut()
+                .props
+                .insert("set".into(), setter.unwrap_or(undef));
+            desc.borrow_mut()
+                .props
+                .insert("enumerable".into(), Value::Bool(enumerable));
+            desc.borrow_mut()
+                .props
+                .insert("configurable".into(), Value::Bool(configurable));
+            return Value::Object(desc);
+        }
         let writable = !object
             .non_enumerable_props
             .contains(&("__writable_".to_string() + property));
@@ -3349,6 +3379,24 @@ impl Interpreter {
                     ));
                 };
                 let desc = descriptor.borrow();
+                // Accessor descriptor: install `__get_`/`__set_` accessors.
+                let getter = desc.props.get("get").cloned();
+                let setter = desc.props.get("set").cloned();
+                if getter.as_ref().is_some_and(|g| g.is_callable()) {
+                    let g = getter.clone().unwrap();
+                    drop(desc);
+                    Self::define_non_enumerable(&target, &format!("__get_{key}"), g);
+                    if let Some(s) = setter.clone().filter(|s| s.is_callable()) {
+                        Self::define_non_enumerable(&target, &format!("__set_{key}"), s);
+                    }
+                    return Ok(Value::Object(target));
+                }
+                if setter.as_ref().is_some_and(|s| s.is_callable()) {
+                    let s = setter.clone().unwrap();
+                    drop(desc);
+                    Self::define_non_enumerable(&target, &format!("__set_{key}"), s);
+                    return Ok(Value::Object(target));
+                }
                 let value = desc.props.get("value").cloned();
                 let writable = desc
                     .props
