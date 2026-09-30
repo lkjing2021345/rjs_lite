@@ -43,6 +43,15 @@ impl Env {
             .or_else(|| self.parent.as_ref().and_then(|p| p.borrow().get(name)))
     }
 
+    /// Whether `name` is resolvable in this scope chain.
+    pub(crate) fn has(&self, name: &str) -> bool {
+        self.values.contains_key(name)
+            || self
+                .parent
+                .as_ref()
+                .is_some_and(|p| p.borrow().has(name))
+    }
+
     pub(crate) fn assign(&mut self, name: &str, value: Value) -> JsResult<()> {
         if let Some(binding) = self.values.get_mut(name) {
             if !binding.mutable {
@@ -2451,6 +2460,12 @@ impl Interpreter {
                         "in strict mode code, functions may not be invoked with 'arguments' reassigned",
                     ));
                 }
+                // Strict mode: assigning to an undeclared name is a ReferenceError.
+                if self.strict && !self.env.borrow().has(name) {
+                    return Err(JsError::reference_error(format!(
+                        "{name} is not defined"
+                    )));
+                }
                 self.env.borrow_mut().assign(name, value)
             }
             Expr::Member { .. } | Expr::Index { .. } => {
@@ -2823,7 +2838,12 @@ impl Interpreter {
                         .borrow_mut()
                         .define("arguments".into(), Value::Object(args_obj), true);
                 }
+                // A function is strict if its body has a "use strict" directive
+                // (or the enclosing code was already strict).
+                let saved_strict = self.strict;
+                self.detect_strict_mode(&body);
                 let result = self.eval_statements(&body);
+                self.strict = saved_strict;
                 self.env = previous;
                 self.leave_call();
                 match result? {
