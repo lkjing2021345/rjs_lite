@@ -1403,23 +1403,21 @@ impl Parser {
                 }
                 continue;
             }
-            // Generator / async-generator method prefix:
-            // `*name(...) {}`, `*['a'](...) {}`, `async *name(...) {}`.
+            // Generator / async method prefix:
+            // `*name(...) {}`, `async name(...) {}`, `async *name(...) {}`.
             let mut is_generator = false;
             let mut is_async = false;
             if self.at(&TokenKind::Star) {
                 self.advance();
                 is_generator = true;
             } else if self.at(&TokenKind::Async)
-                && self
-                    .tokens
-                    .get(self.pos + 1)
-                    .is_some_and(|t| matches!(t.kind, TokenKind::Star))
+                && self.next_is_property_name()
             {
                 self.advance();
-                self.advance();
-                is_generator = true;
                 is_async = true;
+                if self.eat(&TokenKind::Star) {
+                    is_generator = true;
+                }
             }
             // Computed property: `[expr]: value` or `[expr](...) {}` (method).
             if self.at(&TokenKind::LeftBracket) {
