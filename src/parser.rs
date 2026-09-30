@@ -358,6 +358,11 @@ impl Parser {
             .is_some_and(|t| std::mem::discriminant(&t.kind) == std::mem::discriminant(kind))
     }
 
+    /// Line number of the token following the current one (0 if none).
+    fn next_span_line(&self) -> usize {
+        self.tokens.get(self.pos + 1).map_or(0, |t| t.span.line)
+    }
+
     /// Whether the token following the current one can start a class member
     /// name (used to disambiguate `get`/`set` accessors from methods).
     fn next_is_property_name(&self) -> bool {
@@ -783,7 +788,10 @@ impl Parser {
             let key = match self.advance().clone().kind {
                 TokenKind::Identifier(s) | TokenKind::String(s) => s,
                 TokenKind::Number(n) => n.to_string(),
-                _ => return Err(self.error("expected object pattern property name")),
+                k => match Self::keyword_name(&k) {
+                    Some(name) => name.to_string(),
+                    None => return Err(self.error("expected object pattern property name")),
+                },
             };
             let value = if self.eat(&TokenKind::Colon) {
                 let mut pattern = self.pattern()?;
@@ -1346,6 +1354,26 @@ impl Parser {
                 generator,
             });
         }
+        // `async x => body` — single binding identifier, no parentheses.
+        if matches!(self.peek().kind, TokenKind::Identifier(_))
+            && self.next_is(&TokenKind::Arrow)
+            && self.next_span_line() == self.current().span.line
+        {
+            let name = self.identifier()?;
+            self.expect(&TokenKind::Arrow)?;
+            let body = if self.eat(&TokenKind::LeftBrace) {
+                self.block()?
+            } else {
+                let expr = self.expression()?;
+                vec![Stmt::Return(Some(expr))]
+            };
+            return Ok(Expr::AsyncFunction {
+                name: None,
+                params: vec![Pattern::Identifier(name)],
+                body,
+                generator: false,
+            });
+        }
         // `async (params) => body`
         self.expect(&TokenKind::LeftParen)?;
         let params = self.params()?;
@@ -1560,6 +1588,8 @@ impl Parser {
                     TokenKind::If => Some("if".into()),
                     TokenKind::Else => Some("else".into()),
                     TokenKind::While => Some("while".into()),
+                    TokenKind::Do => Some("do".into()),
+                    TokenKind::With => Some("with".into()),
                     TokenKind::For => Some("for".into()),
                     TokenKind::Throw => Some("throw".into()),
                     TokenKind::Try => Some("try".into()),
@@ -1633,6 +1663,49 @@ impl Parser {
             }
         }
         Ok(Expr::Object(props))
+    }
+
+    /// Reserved words are valid property names; map a keyword token to its text.
+    fn keyword_name(kind: &TokenKind) -> Option<&'static str> {
+        Some(match kind {
+            TokenKind::Return => "return",
+            TokenKind::If => "if",
+            TokenKind::Else => "else",
+            TokenKind::While => "while",
+            TokenKind::Do => "do",
+            TokenKind::With => "with",
+            TokenKind::For => "for",
+            TokenKind::Throw => "throw",
+            TokenKind::Try => "try",
+            TokenKind::Catch => "catch",
+            TokenKind::Finally => "finally",
+            TokenKind::Switch => "switch",
+            TokenKind::Case => "case",
+            TokenKind::Default => "default",
+            TokenKind::Break => "break",
+            TokenKind::Continue => "continue",
+            TokenKind::New => "new",
+            TokenKind::This => "this",
+            TokenKind::Typeof => "typeof",
+            TokenKind::Instanceof => "instanceof",
+            TokenKind::Delete => "delete",
+            TokenKind::Void => "void",
+            TokenKind::In => "in",
+            TokenKind::Var => "var",
+            TokenKind::Let => "let",
+            TokenKind::Const => "const",
+            TokenKind::Function => "function",
+            TokenKind::Class => "class",
+            TokenKind::Super => "super",
+            TokenKind::Async => "async",
+            TokenKind::Await => "await",
+            TokenKind::Yield => "yield",
+            TokenKind::True => "true",
+            TokenKind::False => "false",
+            TokenKind::Null => "null",
+            TokenKind::Undefined => "undefined",
+            _ => return None,
+        })
     }
 
     fn is_assignable(expr: &Expr) -> bool {
@@ -1722,6 +1795,8 @@ impl Parser {
             TokenKind::If => Ok("if".into()),
             TokenKind::Else => Ok("else".into()),
             TokenKind::While => Ok("while".into()),
+            TokenKind::Do => Ok("do".into()),
+            TokenKind::With => Ok("with".into()),
             TokenKind::For => Ok("for".into()),
             TokenKind::Throw => Ok("throw".into()),
             TokenKind::Try => Ok("try".into()),
