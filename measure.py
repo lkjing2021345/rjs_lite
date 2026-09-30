@@ -110,15 +110,26 @@ for m, n in rc.most_common(15):
 if len(sys.argv) > 2:
     needle = sys.argv[2]
     shown = 0
-    limit = 100 if needle == '*' else 15
+    limit = 100 if needle == '*' else 40
     only_parse = len(sys.argv) > 3 and sys.argv[3] == 'parse'
     for path, phase, msg, neg in results:
-        if neg or phase not in ('parse', 'runtime'):
+        if neg:
+            continue
+        if phase not in ('parse', 'runtime') and needle != 'timeout':
+            continue
+        if phase == 'parse' and needle not in ('*', 'timeout') and needle not in msg:
+            continue
+        if phase == 'runtime' and needle not in ('*', 'timeout') and needle not in msg:
+            continue
+        if needle == 'timeout' and phase != 'timeout':
+            continue
+        if needle == '*':
+            pass
+        elif needle != 'timeout' and needle not in msg:
             continue
         if only_parse and phase != 'parse':
             continue
-        if needle == '*' or needle in msg:
-            print('  FAIL', os.path.relpath(path), '::', msg)
-            shown += 1
-            if shown >= limit:
-                break
+        print('  FAIL', os.path.relpath(path), '::', phase, msg)
+        shown += 1
+        if shown >= limit:
+            break

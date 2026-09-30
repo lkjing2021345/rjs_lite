@@ -1954,6 +1954,61 @@ impl Interpreter {
                 }
             }
             Pattern::ArrayPattern(elements) => {
+                // Prefer the iterator protocol when the source is iterable and
+                // not a plain array, so user iterators drive destructuring.
+                let custom = self
+                    .get_property_on_value(&value, "Symbol.iterator")
+                    .is_callable();
+                let is_plain_array = matches!(&value, Value::Object(o)
+                    if matches!(o.borrow().internal, Internal::Array(_)));
+                if custom && !is_plain_array {
+                    let iter_method = self.get_property_on_value(&value, "Symbol.iterator");
+                    let iterator = self.call(iter_method, Vec::new(), value.clone(), false)?;
+                    let next = self.get_property_on_value(&iterator, "next");
+                    let ret = self.get_property_on_value(&iterator, "return");
+                    let mut done = false;
+                    let mut has_rest = false;
+                    let outcome = (|| -> JsResult<()> {
+                        for element in elements {
+                            if let Pattern::Rest(inner) = element {
+                                has_rest = true;
+                                let mut rest: Vec<Option<Value>> = Vec::new();
+                                loop {
+                                    let step =
+                                        self.call(next.clone(), Vec::new(), iterator.clone(), false)?;
+                                    if self.get_property_on_value(&step, "done").is_truthy() {
+                                        done = true;
+                                        break;
+                                    }
+                                    rest.push(Some(self.get_property_on_value(&step, "value")));
+                                }
+                                let arr = Object::with_internal(Internal::Array(rest));
+                                arr.borrow_mut().proto = Some(self.array_proto.clone());
+                                self.bind_pattern(inner, Value::Object(arr), mutable)?;
+                                return Ok(());
+                            }
+                            let step =
+                                self.call(next.clone(), Vec::new(), iterator.clone(), false)?;
+                            if self.get_property_on_value(&step, "done").is_truthy() {
+                                done = true;
+                            }
+                            let item = if done {
+                                Value::Undefined
+                            } else {
+                                self.get_property_on_value(&step, "value")
+                            };
+                            self.bind_pattern(element, item, mutable)?;
+                        }
+                        Ok(())
+                    })();
+                    // IteratorClose: if we stopped before exhaustion, call
+                    // `return()` (errors from binding propagate afterwards).
+                    if !done && !has_rest && ret.is_callable() {
+                        let _ = self.call(ret, Vec::new(), iterator.clone(), false);
+                    }
+                    outcome?;
+                    return Ok(());
+                }
                 let mut index = 0usize;
                 for element in elements {
                     if let Pattern::Rest(inner) = element {
