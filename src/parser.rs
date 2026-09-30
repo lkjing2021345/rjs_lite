@@ -7,6 +7,7 @@ pub fn parse(tokens: Vec<Token>) -> JsResult<Program> {
         tokens,
         pos: 0,
         strict: false,
+        generator_depth: 0,
     }
     .program()
 }
@@ -18,6 +19,8 @@ struct Parser {
     /// directive. This affects how function declarations in statement
     /// positions are validated.
     strict: bool,
+    /// >0 while parsing a generator function body, where `yield` is a keyword.
+    generator_depth: usize,
 }
 
 impl Parser {
@@ -180,8 +183,7 @@ impl Parser {
         let name = self.identifier()?;
         self.expect(&TokenKind::LeftParen)?;
         let params = self.params()?;
-        self.expect(&TokenKind::LeftBrace)?;
-        let body = self.block()?;
+        let body = self.function_body(generator)?;
         // Allow an optional trailing semicolon after the function body.
         self.optional_semicolon();
         Ok(Stmt::FunctionDecl {
@@ -200,8 +202,7 @@ impl Parser {
         let name = self.identifier()?;
         self.expect(&TokenKind::LeftParen)?;
         let params = self.params()?;
-        self.expect(&TokenKind::LeftBrace)?;
-        let body = self.block()?;
+        let body = self.function_body(generator)?;
         self.optional_semicolon();
         Ok(Stmt::FunctionDecl {
             name,
@@ -300,8 +301,7 @@ impl Parser {
         }
         if self.eat(&TokenKind::LeftParen) {
             let params = self.params()?;
-            self.expect(&TokenKind::LeftBrace)?;
-            let body = self.block()?;
+            let body = self.function_body(is_generator)?;
             if name == "constructor" && !is_static && !is_generator && !is_async && !is_private {
                 return Ok(ClassElement::Constructor { params, body });
             }
@@ -656,6 +656,20 @@ impl Parser {
         }
         self.expect(&TokenKind::RightBrace)?;
         Ok(stmts)
+    }
+
+    /// Parse a function body `{ ... }`, tracking generator context so `yield`
+    /// is treated as a keyword inside generators.
+    fn function_body(&mut self, generator: bool) -> JsResult<Vec<Stmt>> {
+        self.expect(&TokenKind::LeftBrace)?;
+        if generator {
+            self.generator_depth += 1;
+        }
+        let body = self.block();
+        if generator {
+            self.generator_depth -= 1;
+        }
+        body
     }
 
     fn params(&mut self) -> JsResult<Vec<Pattern>> {
@@ -1080,12 +1094,7 @@ impl Parser {
             self.postfix(new_expr)
         } else if self.eat(&TokenKind::Await) {
             Ok(Expr::Await(Box::new(self.unary()?)))
-        } else if self.at(&TokenKind::Yield)
-            && !self
-                .next_is(&TokenKind::RightParen)
-                && !self.next_is(&TokenKind::Comma)
-                && !self.next_is(&TokenKind::RightBracket)
-        {
+        } else if self.at(&TokenKind::Yield) && self.generator_depth > 0 {
             self.advance();
             // `yield`, `yield expr`, or `yield* expr` (delegation is treated
             // as a plain yield for now). A line terminator after `yield`
@@ -1332,11 +1341,11 @@ impl Parser {
         let name = self.optional_identifier()?;
         self.expect(&TokenKind::LeftParen)?;
         let params = self.params()?;
-        self.expect(&TokenKind::LeftBrace)?;
+        let body = self.function_body(generator)?;
         Ok(Expr::Function {
             name,
             params,
-            body: self.block()?,
+            body,
             generator,
         })
     }
@@ -1348,11 +1357,11 @@ impl Parser {
             let name = self.optional_identifier()?;
             self.expect(&TokenKind::LeftParen)?;
             let params = self.params()?;
-            self.expect(&TokenKind::LeftBrace)?;
+            let body = self.function_body(generator)?;
             return Ok(Expr::AsyncFunction {
                 name,
                 params,
-                body: self.block()?,
+                body,
                 generator,
             });
         }
@@ -1568,8 +1577,7 @@ impl Parser {
                     // Method with computed key: `[expr](params) { body }`
                     self.advance(); // consume `(`
                     let params = self.params()?;
-                    self.expect(&TokenKind::LeftBrace)?;
-                    let body = self.block()?;
+                    let body = self.function_body(is_generator)?;
                     let k = key.clone();
                     let value = if is_async {
                         Expr::AsyncFunction { name: Some(k), params, body, generator: true }
@@ -1631,8 +1639,7 @@ impl Parser {
                     // Method definition: `key(params) { body }`
                     self.advance(); // consume `(`
                     let params = self.params()?;
-                    self.expect(&TokenKind::LeftBrace)?;
-                    let body = self.block()?;
+                    let body = self.function_body(is_generator)?;
                     let k = key.clone().unwrap_or_default();
                     let value = if is_async {
                         Expr::AsyncFunction {
