@@ -215,7 +215,7 @@ impl Parser {
             is_static = true;
         }
         let mut is_async = false;
-        if self.at_ident("async")
+        if self.at(&TokenKind::Async)
             && !self.next_is(&TokenKind::LeftParen)
             && !self.next_is(&TokenKind::Assign)
         {
