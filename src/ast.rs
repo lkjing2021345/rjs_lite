@@ -43,6 +43,8 @@ pub enum Stmt {
         body: Vec<Stmt>,
         /// True for `function* name(...) { ... }` generator declarations.
         generator: bool,
+        /// True for `async function name(...) { ... }`.
+        is_async: bool,
     },
     /// `class Name [extends Super] { ... }` declaration.
     ClassDecl {

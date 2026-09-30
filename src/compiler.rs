@@ -150,6 +150,7 @@ impl<'a> Compiler<'a> {
                 params,
                 body,
                 generator,
+                ..
             } => {
                 let func_idx = self.compile_function(params, body, *generator);
                 self.emit(Instruction::PushFunction(func_idx));

@@ -189,6 +189,7 @@ impl Parser {
             params,
             body,
             generator,
+            is_async: false,
         })
     }
 
@@ -207,6 +208,7 @@ impl Parser {
             params,
             body,
             generator,
+            is_async: true,
         })
     }
 

@@ -114,6 +114,7 @@ pub struct Interpreter {
     pub(crate) function_proto: ObjectRef,
     pub(crate) array_proto: ObjectRef,
     pub(crate) error_proto: ObjectRef,
+    pub(crate) promise_proto: ObjectRef,
     pub(crate) string_proto: ObjectRef,
     pub(crate) number_proto: ObjectRef,
     pub(crate) boolean_proto: ObjectRef,
@@ -172,6 +173,7 @@ impl Interpreter {
         let function_proto = Object::plain();
         let array_proto = Object::plain();
         let error_proto = Object::plain();
+        let promise_proto = Object::plain();
         let string_proto = Object::plain();
         let number_proto = Object::plain();
         let boolean_proto = Object::plain();
@@ -188,6 +190,7 @@ impl Interpreter {
             function_proto,
             array_proto,
             error_proto,
+            promise_proto,
             string_proto,
             number_proto,
             boolean_proto,
@@ -800,6 +803,37 @@ impl Interpreter {
             .borrow_mut()
             .props
             .insert("message".into(), Value::String(String::new()));
+        // Minimal Promise implementation (synchronous microtask model).
+        self.promise_proto.borrow_mut().proto = Some(self.object_proto.clone());
+        self.define_native("Promise");
+        Self::define_non_enumerable(
+            &self.promise_proto,
+            "then",
+            self.native_method("Promise.prototype.then"),
+        );
+        Self::define_non_enumerable(
+            &self.promise_proto,
+            "catch",
+            self.native_method("Promise.prototype.catch"),
+        );
+        if let Some(Value::Object(promise_ctor)) = self.env.borrow().get("Promise") {
+            Self::define_non_enumerable(
+                &promise_ctor,
+                "prototype",
+                Value::Object(self.promise_proto.clone()),
+            );
+            Self::define_non_enumerable(
+                &promise_ctor,
+                "resolve",
+                self.native_method("Promise.resolve"),
+            );
+            Self::define_non_enumerable(
+                &promise_ctor,
+                "reject",
+                self.native_method("Promise.reject"),
+            );
+            Self::define_non_enumerable(&promise_ctor, "all", self.native_method("Promise.all"));
+        }
         self.define_native("Symbol");
         if let Some(Value::Object(sym_ctor)) = self.env.borrow().get("Symbol") {
             let toStringTag = Value::String("Symbol.toStringTag".into());
@@ -1004,8 +1038,10 @@ impl Interpreter {
                 params,
                 body,
                 generator,
+                is_async,
             } => {
-                let value = self.make_function_async(params.clone(), body.clone(), false, *generator);
+                let value =
+                    self.make_function_async(params.clone(), body.clone(), *is_async, *generator);
                 Self::set_function_name(&value, name);
                 self.env
                     .borrow_mut()
@@ -1495,6 +1531,38 @@ impl Interpreter {
             },
         );
         value
+    }
+
+    /// Create a settled Promise wrapping `value`.
+    pub(crate) fn make_promise(&mut self, value: Value, fulfilled: bool) -> Value {
+        let obj = Object::plain();
+        obj.borrow_mut().proto = Some(self.promise_proto.clone());
+        Self::define_non_enumerable(
+            &obj,
+            "__state",
+            Value::String(if fulfilled { "fulfilled" } else { "rejected" }.into()),
+        );
+        obj.borrow_mut()
+            .props
+            .insert("__value".into(), value);
+        Value::Object(obj)
+    }
+
+    fn promise_state(value: &Value) -> (bool, Value) {
+        if let Value::Object(o) = value {
+            let fulfilled = matches!(
+                o.borrow().props.get("__state"),
+                Some(Value::String(s)) if s == "fulfilled"
+            );
+            let v = o
+                .borrow()
+                .props
+                .get("__value")
+                .cloned()
+                .unwrap_or(Value::Undefined);
+            return (fulfilled, v);
+        }
+        (true, value.clone())
     }
 
     /// Register a generator object created by the VM. It has no tree-walking
@@ -2045,10 +2113,17 @@ impl Interpreter {
                 Ok(value)
             }
             Expr::Await(expr) => {
-                // In a synchronous interpreter, `await` just evaluates the
-                // expression. If the result is a Promise (native), we return
-                // it as-is for now — full async scheduling is out of scope.
+                // Synchronous model: evaluate, then unwrap a Promise value.
                 let v = self.eval_expr(expr)?;
+                if let Value::Object(o) = &v
+                    && o.borrow().props.contains_key("__state")
+                {
+                    let (fulfilled, inner) = Self::promise_state(&v);
+                    if !fulfilled {
+                        return Err(JsError::Flow(Flow::Throw(inner)));
+                    }
+                    return Ok(inner);
+                }
                 Ok(v)
             }
             Expr::Assign { target, value } => {
@@ -2659,6 +2734,7 @@ impl Interpreter {
                 params,
                 body,
                 generator,
+                is_async,
                 ..
             } => {
                 if generator {
@@ -2669,7 +2745,15 @@ impl Interpreter {
                         .get(&(Rc::as_ptr(&func) as usize))
                         .cloned()
                         .unwrap_or_else(|| self.env.clone());
-                    return Ok(self.make_generator(params, body, closure_env, args, this_value));
+                    let generator_obj =
+                        self.make_generator(params, body, closure_env, args, this_value);
+                    if is_async {
+                        // Async generators yield promises from `.next()`.
+                        if let Value::Object(o) = &generator_obj {
+                            Self::define_non_enumerable(o, "__async_gen", Value::Bool(true));
+                        }
+                    }
+                    return Ok(generator_obj);
                 }
                 self.enter_call()?;
                 let previous = self.env.clone();
@@ -2750,11 +2834,20 @@ impl Interpreter {
                             } else {
                                 Ok(this_obj)
                             }
+                        } else if is_async {
+                            // `async function` resolves its return value.
+                            Ok(self.make_promise(v, true))
                         } else {
                             Ok(v)
                         }
                     }
-                    Flow::Throw(v) => Err(JsError::Flow(Flow::Throw(v))),
+                    Flow::Throw(v) => {
+                        if is_async {
+                            Ok(self.make_promise(v, false))
+                        } else {
+                            Err(JsError::Flow(Flow::Throw(v)))
+                        }
+                    }
                     Flow::Break => Err(JsError::syntax_error("break used outside loop")),
                     Flow::Continue => Err(JsError::syntax_error("continue used outside loop")),
                     Flow::Yield(_) => Err(JsError::syntax_error("yield used outside generator")),
@@ -2787,6 +2880,120 @@ impl Interpreter {
                 self.push_output(s);
                 Ok(Value::Undefined)
             }
+            "Promise" => {
+                // `new Promise(executor)` — run the executor synchronously.
+                let promise = Object::plain();
+                promise.borrow_mut().proto = Some(self.promise_proto.clone());
+                Self::define_non_enumerable(
+                    &promise,
+                    "__state",
+                    Value::String("pending".into()),
+                );
+                let bind = |native_name: &'static str| -> Value {
+                    let Value::Object(target) = self.native_method(native_name) else {
+                        unreachable!()
+                    };
+                    Value::Object(Object::with_internal(Internal::Bound {
+                        target,
+                        bound_this: Value::Object(promise.clone()),
+                        bound_args: Vec::new(),
+                    }))
+                };
+                let resolve = bind("Promise.__resolve");
+                let reject = bind("Promise.__reject");
+                if let Some(executor) = args.first().cloned() {
+                    let _ =
+                        self.call(executor, vec![resolve, reject], Value::Undefined, false);
+                }
+                Ok(Value::Object(promise))
+            }
+            "Promise.__resolve" => {
+                if let Value::Object(o) = &this_value {
+                    o.borrow_mut()
+                        .props
+                        .insert("__state".into(), Value::String("fulfilled".into()));
+                    o.borrow_mut().props.insert(
+                        "__value".into(),
+                        args.first().cloned().unwrap_or(Value::Undefined),
+                    );
+                }
+                Ok(Value::Undefined)
+            }
+            "Promise.__reject" => {
+                if let Value::Object(o) = &this_value {
+                    o.borrow_mut()
+                        .props
+                        .insert("__state".into(), Value::String("rejected".into()));
+                    o.borrow_mut().props.insert(
+                        "__value".into(),
+                        args.first().cloned().unwrap_or(Value::Undefined),
+                    );
+                }
+                Ok(Value::Undefined)
+            }
+            "Promise.resolve" => {
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Object(o) = &v
+                    && Rc::ptr_eq(&o.borrow().proto.clone().unwrap_or_else(Object::plain), &self.promise_proto)
+                {
+                    return Ok(v);
+                }
+                Ok(self.make_promise(v, true))
+            }
+            "Promise.reject" => {
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                Ok(self.make_promise(v, false))
+            }
+            "Promise.all" => {
+                let values = args.first().cloned().unwrap_or(Value::Undefined);
+                let mut out = Vec::new();
+                if let Value::Object(o) = &values
+                    && let Internal::Array(items) = &o.borrow().internal
+                {
+                    for item in items {
+                        let v = item.clone().unwrap_or(Value::Undefined);
+                        let (_, resolved) = Self::promise_state(&v);
+                        out.push(Some(resolved));
+                    }
+                }
+                let arr = Object::with_internal(Internal::Array(out));
+                arr.borrow_mut().proto = Some(self.array_proto.clone());
+                Ok(self.make_promise(Value::Object(arr), true))
+            }
+            "Promise.prototype.then" => {
+                let (fulfilled, value) = Self::promise_state(&this_value);
+                let handler = if fulfilled {
+                    args.first().cloned()
+                } else {
+                    args.get(1).cloned()
+                };
+                if let Some(h) = handler {
+                    if h.is_callable() {
+                        match self.call(h, vec![value], Value::Undefined, false) {
+                            Ok(v) => {
+                                // Flatten a returned promise.
+                                if let Value::Object(o) = &v
+                                    && o.borrow().props.contains_key("__state")
+                                {
+                                    return Ok(v);
+                                }
+                                return Ok(self.make_promise(v, true));
+                            }
+                            Err(JsError::Flow(Flow::Throw(t))) => {
+                                return Ok(self.make_promise(t, false));
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                }
+                Ok(self.make_promise(value, fulfilled))
+            }
+            "Promise.prototype.catch" => self.call_native(
+                "Promise.prototype.then",
+                vec![Value::Undefined, args.first().cloned().unwrap_or(Value::Undefined)],
+                this_value,
+                None,
+            ),
             "eval" => {
                 let code = args
                     .first()
@@ -2818,7 +3025,12 @@ impl Interpreter {
                 // Drives a generator object created by `make_generator`.
                 if let Value::Object(generator) = &this_value {
                     let key = Rc::as_ptr(generator) as usize;
-                    return self.resume_generator(key);
+                    let is_async = generator.borrow().props.contains_key("__async_gen");
+                    let result = self.resume_generator(key)?;
+                    if is_async {
+                        return Ok(self.make_promise(result, true));
+                    }
+                    return Ok(result);
                 }
                 Ok(Self::iterator_result(Value::Undefined, true))
             }
