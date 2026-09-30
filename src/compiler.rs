@@ -730,6 +730,9 @@ impl<'a> Compiler<'a> {
             Expr::Class { extends, body, .. } => {
                 self.emit_class(extends, body);
             }
+            Expr::NewTarget => {
+                self.emit(Instruction::PushUndefined);
+            }
             Expr::Super => {
                 self.emit(Instruction::GetLocal("__super__".into()));
             }

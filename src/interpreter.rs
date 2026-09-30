@@ -1905,6 +1905,7 @@ impl Interpreter {
                 extends,
                 body,
             } => self.make_class(name.clone(), extends, body),
+            Expr::NewTarget => Ok(Value::Undefined),
             Expr::Super => Err(JsError::syntax_error("'super' keyword unexpected here")),
             // Spread is only valid in call arguments / array literals; as a
             // standalone expression it evaluates to its operand.

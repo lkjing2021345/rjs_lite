@@ -986,6 +986,17 @@ impl Parser {
         } else if self.eat(&TokenKind::Typeof) {
             Ok(Expr::Typeof(Box::new(self.unary()?)))
         } else if self.eat(&TokenKind::New) {
+            // `new.target` — the constructor being called by `new`.
+            if self.at(&TokenKind::Dot)
+                && self
+                    .tokens
+                    .get(self.pos + 1)
+                    .is_some_and(|t| matches!(&t.kind, TokenKind::Identifier(s) if s == "target"))
+            {
+                self.advance(); // consume `.`
+                self.advance(); // consume `target`
+                return Ok(Expr::NewTarget);
+            }
             let callee = self.new_callee()?;
             let args = if self.eat(&TokenKind::LeftParen) {
                 self.arguments()?

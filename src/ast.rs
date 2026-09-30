@@ -195,6 +195,8 @@ pub enum Expr {
     /// The `super` keyword. Used as a call callee (`super(...)`) or as the
     /// object of a member call (`super.method(...)`).
     Super,
+    /// `new.target` — the constructor being called by `new`.
+    NewTarget,
     /// `...expr` in a call argument list or array literal.
     Spread(Box<Expr>),
     /// Comma operator: `(a, b)` evaluates to `b`.
