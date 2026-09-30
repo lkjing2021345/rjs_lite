@@ -1003,6 +1003,30 @@ impl Interpreter {
     }
 
     fn eval_statements(&mut self, statements: &[Stmt]) -> JsResult<Flow> {
+        // Hoist function declarations so they are visible before their
+        // textual position (e.g. `initial = f; function f(){}`).
+        for stmt in statements {
+            if let Stmt::FunctionDecl {
+                name,
+                params,
+                body,
+                generator,
+                is_async,
+            } = stmt
+            {
+                if self.env.borrow().get(name).is_none() {
+                    let value =
+                        self.make_function_async(params.clone(), body.clone(), *is_async, *generator);
+                    Self::set_function_name(&value, name);
+                    self.env
+                        .borrow_mut()
+                        .define(name.clone(), value.clone(), true);
+                    if self.env.borrow().parent.is_none() {
+                        self.global.borrow_mut().props.insert(name.clone(), value);
+                    }
+                }
+            }
+        }
         let mut last = Value::Undefined;
         for stmt in statements {
             match self.eval_stmt(stmt)? {
