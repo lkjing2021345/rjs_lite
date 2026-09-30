@@ -1000,6 +1000,7 @@ impl Interpreter {
                 generator,
             } => {
                 let value = self.make_function_async(params.clone(), body.clone(), false, *generator);
+                Self::set_function_name(&value, name);
                 self.env
                     .borrow_mut()
                     .define(name.clone(), value.clone(), false);
@@ -1252,6 +1253,13 @@ impl Interpreter {
         self.make_function_async(params, body, false, false)
     }
 
+    /// Set a non-enumerable `name` own property on a function value.
+    pub(crate) fn set_function_name(value: &Value, name: &str) {
+        if let Value::Object(obj) = value {
+            Self::define_non_enumerable(obj, "name", Value::String(name.to_string()));
+        }
+    }
+
     fn make_function_async(
         &mut self,
         params: Vec<Pattern>,
@@ -1259,6 +1267,10 @@ impl Interpreter {
         is_async: bool,
         generator: bool,
     ) -> Value {
+        let arity = params
+            .iter()
+            .take_while(|p| !matches!(p, Pattern::Rest(_)))
+            .count();
         let obj = Object::with_internal(Internal::Function {
             params,
             body,
@@ -1271,6 +1283,8 @@ impl Interpreter {
         proto.borrow_mut().proto = Some(self.object_proto.clone());
         Self::define_non_enumerable(&proto, "constructor", Value::Object(obj.clone()));
         Self::define_non_enumerable(&obj, "prototype", Value::Object(proto));
+        Self::define_non_enumerable(&obj, "length", Value::Number(arity as f64));
+        Self::define_non_enumerable(&obj, "name", Value::String(String::new()));
         let value = Value::Object(obj.clone());
         self.remember_closure(&value);
         value
@@ -1310,6 +1324,11 @@ impl Interpreter {
         });
         Self::define_non_enumerable(&proto_obj, "constructor", Value::Object(class_obj.clone()));
         Self::define_non_enumerable(&class_obj, "prototype", Value::Object(proto_obj.clone()));
+        Self::define_non_enumerable(
+            &class_obj,
+            "name",
+            Value::String(name.clone().unwrap_or_default()),
+        );
         Self::define_non_enumerable(
             &class_obj,
             "__super__",
@@ -1911,11 +1930,15 @@ impl Interpreter {
                 Ok(Value::Object(obj))
             }
             Expr::Function {
-                name: _,
+                name,
                 params,
                 body,
                 generator,
-            } => Ok(self.make_function_async(params.clone(), body.clone(), false, *generator)),
+            } => {
+                let value = self.make_function_async(params.clone(), body.clone(), false, *generator);
+                Self::set_function_name(&value, name.as_deref().unwrap_or(""));
+                Ok(value)
+            }
             Expr::ArrowFunction { params, body } => {
                 let obj = Object::with_internal(Internal::Function {
                     params: params.clone(),
@@ -1929,16 +1952,26 @@ impl Interpreter {
                 proto.borrow_mut().proto = Some(self.object_proto.clone());
                 Self::define_non_enumerable(&proto, "constructor", Value::Object(obj.clone()));
                 Self::define_non_enumerable(&obj, "prototype", Value::Object(proto));
+                let arity = params
+                    .iter()
+                    .take_while(|p| !matches!(p, Pattern::Rest(_)))
+                    .count();
+                Self::define_non_enumerable(&obj, "length", Value::Number(arity as f64));
+                Self::define_non_enumerable(&obj, "name", Value::String(String::new()));
                 let value = Value::Object(obj.clone());
                 self.remember_closure(&value);
                 Ok(value)
             }
             Expr::AsyncFunction {
-                name: _,
+                name,
                 params,
                 body,
                 generator,
-            } => Ok(self.make_function_async(params.clone(), body.clone(), true, *generator)),
+            } => {
+                let value = self.make_function_async(params.clone(), body.clone(), true, *generator);
+                Self::set_function_name(&value, name.as_deref().unwrap_or(""));
+                Ok(value)
+            }
             Expr::Yield(argument) => {
                 // Evaluate the yielded operand. If we are resuming a
                 // generator and this is the yield being awaited, record it in
@@ -2615,8 +2648,8 @@ impl Interpreter {
                     let value = args.get(index).cloned().unwrap_or(Value::Undefined);
                     self.bind_pattern(pattern, value, true)?;
                 }
-                // Build the `arguments` object for non-constructor calls.
-                if !construct {
+                // Build the `arguments` object (constructors have one too).
+                {
                     let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
                     let args_obj = Object::with_internal(Internal::Array(slots));
                     args_obj.borrow_mut().proto = Some(self.object_proto.clone());
