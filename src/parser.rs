@@ -44,6 +44,18 @@ impl Parser {
         if self.eat(&TokenKind::Semicolon) {
             return Ok(Stmt::Expr(Expr::Undefined));
         }
+        // Labeled statement: `label: statement`
+        if matches!(self.peek().kind, TokenKind::Identifier(_))
+            && self.next_is(&TokenKind::Colon)
+        {
+            let label = self.identifier()?;
+            self.expect(&TokenKind::Colon)?;
+            let body = self.statement()?;
+            return Ok(Stmt::Labeled {
+                label,
+                body: Box::new(body),
+            });
+        }
         if self.eat(&TokenKind::Let) || self.eat(&TokenKind::Var) {
             self.var_decl(true)
         } else if self.eat(&TokenKind::Const) {
@@ -61,8 +73,20 @@ impl Parser {
         } else if self.eat(&TokenKind::Try) {
             self.try_stmt()
         } else if self.eat(&TokenKind::Break) {
+            // `break [no LineTerminator here] LabelIdentifier ;`
+            let break_line = self.previous_span().line;
+            let label = if matches!(self.peek().kind, TokenKind::Identifier(_))
+                && self.current().span.line == break_line
+            {
+                Some(self.identifier()?)
+            } else {
+                None
+            };
             self.optional_semicolon();
-            Ok(Stmt::Break)
+            Ok(match label {
+                Some(l) => Stmt::LabeledBreak { label: l },
+                None => Stmt::Break,
+            })
         } else if self.eat(&TokenKind::If) {
             self.if_stmt()
         } else if self.eat(&TokenKind::While) {
@@ -72,8 +96,20 @@ impl Parser {
         } else if self.eat(&TokenKind::Switch) {
             self.switch_stmt()
         } else if self.eat(&TokenKind::Continue) {
+            // `continue [no LineTerminator here] LabelIdentifier ;`
+            let continue_line = self.previous_span().line;
+            let label = if matches!(self.peek().kind, TokenKind::Identifier(_))
+                && self.current().span.line == continue_line
+            {
+                Some(self.identifier()?)
+            } else {
+                None
+            };
             self.optional_semicolon();
-            Ok(Stmt::Continue)
+            Ok(match label {
+                Some(l) => Stmt::LabeledContinue { label: l },
+                None => Stmt::Continue,
+            })
         } else if self.eat(&TokenKind::With) {
             self.expect(&TokenKind::LeftParen)?;
             let expression = self.expression()?;

@@ -85,7 +85,18 @@ pub enum Stmt {
     },
     Block(Vec<Stmt>),
     Break,
+    LabeledBreak {
+        label: String,
+    },
     Continue,
+    LabeledContinue {
+        label: String,
+    },
+    /// `label: statement`
+    Labeled {
+        label: String,
+        body: Box<Stmt>,
+    },
     Expr(Expr),
     /// `with (expr) statement`
     With {

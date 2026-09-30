@@ -363,7 +363,7 @@ impl<'a> Compiler<'a> {
                 }
             }
             Stmt::Block(stmts) => self.emit_statements(stmts),
-            Stmt::Break => {
+            Stmt::Break | Stmt::LabeledBreak { .. } => {
                 let idx = self.emit_jump(|t| Instruction::Jump(t));
                 if let Some(ctx) = self.loops.last_mut() {
                     ctx.break_jumps.push(idx);
@@ -372,13 +372,16 @@ impl<'a> Compiler<'a> {
                     self.switch_breaks.push(idx);
                 }
             }
-            Stmt::Continue => {
+            Stmt::Continue | Stmt::LabeledContinue { .. } => {
                 let target = self
                     .loops
                     .last()
                     .map(|l| l.continue_target)
                     .expect("continue outside of loop");
                 self.emit(Instruction::Jump(target));
+            }
+            Stmt::Labeled { body, .. } => {
+                self.emit_stmt(body);
             }
             Stmt::Expr(e) => {
                 self.emit_expr(e);

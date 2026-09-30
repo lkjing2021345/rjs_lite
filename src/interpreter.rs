@@ -1140,7 +1140,9 @@ impl Interpreter {
                 Ok(Flow::Value(last))
             }
             Stmt::Break => Ok(Flow::Break),
-            Stmt::Continue => Ok(Flow::Continue),
+            Stmt::Continue | Stmt::LabeledContinue { .. } => Ok(Flow::Continue),
+            Stmt::LabeledBreak { .. } => Ok(Flow::Break),
+            Stmt::Labeled { body, .. } => self.eval_stmt(body),
             Stmt::Block(stmts) => self.with_child(stmts),
             Stmt::Expr(expr) => Ok(Flow::Value(self.eval_expr(expr)?)),
             Stmt::With { expression, body } => {
