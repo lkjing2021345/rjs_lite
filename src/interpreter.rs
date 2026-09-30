@@ -2240,14 +2240,15 @@ impl Interpreter {
             Expr::Member { object, property } => {
                 let object_value = self.eval_expr(object)?;
                 self.deny_strict_arguments_callee_value(&object_value, property)?;
-                let method = self.get_property_on_value(&object_value, property);
+                // Invoke a getter if present so `o.g()` calls the result.
+                let method = self.read_property(&object_value, property)?;
                 Ok((method, object_value))
             }
             Expr::Index { object, index } => {
                 let object_value = self.eval_expr(object)?;
                 let key = self.eval_expr(index)?.to_string();
                 self.deny_strict_arguments_callee_value(&object_value, &key)?;
-                let method = self.get_property_on_value(&object_value, &key);
+                let method = self.read_property(&object_value, &key)?;
                 Ok((method, object_value))
             }
             _ => {
