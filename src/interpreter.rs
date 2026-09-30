@@ -980,6 +980,9 @@ impl Interpreter {
                 mutable,
             } => {
                 let value = self.eval_expr(value)?;
+                if let Pattern::Identifier(n) = name {
+                    Self::infer_function_name(&value, n);
+                }
                 self.bind_pattern(name, value, *mutable)?;
                 Ok(Flow::Value(Value::Undefined))
             }
@@ -989,6 +992,9 @@ impl Interpreter {
             } => {
                 for (name, expr) in declarations {
                     let value = self.eval_expr(expr)?;
+                    if let Pattern::Identifier(n) = name {
+                        Self::infer_function_name(&value, n);
+                    }
                     self.bind_pattern(name, value, *mutable)?;
                 }
                 Ok(Flow::Value(Value::Undefined))
@@ -1256,6 +1262,27 @@ impl Interpreter {
     /// Set a non-enumerable `name` own property on a function value.
     pub(crate) fn set_function_name(value: &Value, name: &str) {
         if let Value::Object(obj) = value {
+            Self::define_non_enumerable(obj, "name", Value::String(name.to_string()));
+        }
+    }
+
+    /// NamedEvaluation: an anonymous function/class assigned to a binding takes
+    /// the binding's name (`let f = function() {}` ⇒ `f.name === "f"`).
+    pub(crate) fn infer_function_name(value: &Value, name: &str) {
+        let Value::Object(obj) = value else { return };
+        if !matches!(
+            obj.borrow().internal,
+            Internal::Function { .. }
+        ) {
+            return;
+        }
+        let is_anonymous = obj
+            .borrow()
+            .props
+            .get("name")
+            .map(|n| n.to_string().is_empty())
+            .unwrap_or(true);
+        if is_anonymous {
             Self::define_non_enumerable(obj, "name", Value::String(name.to_string()));
         }
     }
@@ -1687,6 +1714,18 @@ impl Interpreter {
                 } else {
                     value
                 };
+                // NamedEvaluation: `{ fn = function() {} }` ⇒ name "fn".
+                if let Pattern::Identifier(n) = inner.as_ref()
+                    && matches!(
+                        default,
+                        Expr::Function { .. }
+                            | Expr::AsyncFunction { .. }
+                            | Expr::ArrowFunction { .. }
+                            | Expr::Class { .. }
+                    )
+                {
+                    Self::infer_function_name(&value, n);
+                }
                 self.bind_pattern(inner, value, mutable)
             }
             // A bare `Rest` only appears inside a container; binding it
@@ -1923,6 +1962,7 @@ impl Interpreter {
                         // Normal key.
                         Some(key) => {
                             let v = self.eval_expr(e)?;
+                            Self::infer_function_name(&v, key);
                             obj.borrow_mut().props.insert(key.clone(), v);
                         }
                     }
@@ -1997,6 +2037,12 @@ impl Interpreter {
             }
             Expr::Assign { target, value } => {
                 let value = self.eval_expr(value)?;
+                // NamedEvaluation for `f = function() {}` etc.
+                match target.as_ref() {
+                    Expr::Identifier(n) => Self::infer_function_name(&value, n),
+                    Expr::Member { property, .. } => Self::infer_function_name(&value, property),
+                    _ => {}
+                }
                 self.assign_target(target, value.clone())?;
                 Ok(value)
             }
