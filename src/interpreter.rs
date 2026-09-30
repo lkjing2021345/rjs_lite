@@ -1,5 +1,5 @@
 use crate::ast::{BinaryOp, ClassElement, Expr, Pattern, Program, Stmt, UnaryOp};
-use crate::error::{JsError, JsResult};
+use crate::error::{JsError, JsErrorType, JsResult};
 use crate::value::{Internal, Object, ObjectRef, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -981,7 +981,7 @@ impl Interpreter {
                 catch_block,
                 finally_block,
             } => {
-                let mut result = match self.with_child(block)? {
+                let mut result = match self.catchable(|s| s.with_child(block))? {
                     Flow::Throw(v) => {
                         if let Some(catch) = catch_block {
                             let previous = self.env.clone();
@@ -989,7 +989,7 @@ impl Interpreter {
                             if let Some(param) = catch_param {
                                 self.env.borrow_mut().define(param.clone(), v, true);
                             }
-                            let r = self.eval_statements(catch);
+                            let r = self.catchable(|s| s.eval_statements(catch));
                             self.env = previous;
                             r?
                         } else {
@@ -1001,7 +1001,7 @@ impl Interpreter {
                 if let Some(finally) = finally_block {
                     // finally always runs; its throw/return/break/continue
                     // override the pending result per ECMAScript.
-                    if let Ok(finally_result) = self.with_child(finally)
+                    if let Ok(finally_result) = self.catchable(|s| s.with_child(finally))
                         && !matches!(finally_result, Flow::Value(_))
                     {
                         result = finally_result;
@@ -1028,6 +1028,21 @@ impl Interpreter {
                         Flow::Break => break,
                         Flow::Continue => continue,
                         r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Yield(_)) => return Ok(r),
+                    }
+                }
+                Ok(Flow::Value(last))
+            }
+            Stmt::DoWhile { body, condition } => {
+                let mut last = Value::Undefined;
+                loop {
+                    match self.with_child(body)? {
+                        Flow::Value(v) => last = v,
+                        Flow::Break => break,
+                        Flow::Continue => {}
+                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Yield(_)) => return Ok(r),
+                    }
+                    if !self.eval_expr(condition)?.is_truthy() {
+                        break;
                     }
                 }
                 Ok(Flow::Value(last))
@@ -1478,6 +1493,46 @@ impl Interpreter {
         if let Value::Object(obj) = function {
             self.closures
                 .insert(Rc::as_ptr(obj) as usize, self.env.clone());
+        }
+    }
+
+    /// Convert a host-level `JsError` into a JS Error object so it can be
+    /// caught by `try`/`catch` (runtime errors are catchable in ECMAScript).
+    fn error_to_value(&self, error: &JsError) -> Value {
+        let (name, message) = match error {
+            JsError::Lex { message, .. } | JsError::Parse { message, .. } => {
+                ("SyntaxError", message.clone())
+            }
+            JsError::Runtime { message, error_type } => (error_type.as_str(), message.clone()),
+            JsError::Flow(_) => ("Error", error.to_string()),
+        };
+        let obj = Object::plain();
+        obj.borrow_mut().proto = Some(self.error_proto.clone());
+        obj.borrow_mut()
+            .props
+            .insert("name".into(), Value::String(name.into()));
+        obj.borrow_mut()
+            .props
+            .insert("message".into(), Value::String(message));
+        // Own `constructor` so `err.constructor === SyntaxError` holds.
+        if let Some(ctor) = self.env.borrow().get(name) {
+            obj.borrow_mut().props.insert("constructor".into(), ctor);
+        }
+        Value::Object(obj)
+    }
+
+    /// Evaluate `f`, converting a host-level `JsError` into a thrown JS value.
+    fn catchable<F>(&mut self, f: F) -> JsResult<Flow>
+    where
+        F: FnOnce(&mut Self) -> JsResult<Flow>,
+    {
+        match f(self) {
+            Ok(flow) => Ok(flow),
+            Err(JsError::Flow(flow)) => Ok(flow),
+            Err(e) => {
+                let v = self.error_to_value(&e);
+                Ok(Flow::Throw(v))
+            }
         }
     }
 

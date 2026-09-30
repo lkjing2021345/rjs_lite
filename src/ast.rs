@@ -67,6 +67,10 @@ pub enum Stmt {
         condition: Expr,
         body: Vec<Stmt>,
     },
+    DoWhile {
+        body: Vec<Stmt>,
+        condition: Expr,
+    },
     For {
         init: Option<Box<Stmt>>,
         condition: Option<Expr>,

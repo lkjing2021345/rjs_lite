@@ -91,6 +91,8 @@ impl Parser {
             self.if_stmt()
         } else if self.eat(&TokenKind::While) {
             self.while_stmt()
+        } else if self.eat(&TokenKind::Do) {
+            self.do_stmt()
         } else if self.eat(&TokenKind::For) {
             self.for_stmt()
         } else if self.eat(&TokenKind::Switch) {
@@ -464,6 +466,17 @@ impl Parser {
             condition,
             body: self.iteration_body_as_block()?,
         })
+    }
+
+    fn do_stmt(&mut self) -> JsResult<Stmt> {
+        let body = self.statement_as_block()?;
+        self.expect(&TokenKind::While)?;
+        self.expect(&TokenKind::LeftParen)?;
+        let condition = self.expression()?;
+        self.expect(&TokenKind::RightParen)?;
+        // ASI: the trailing semicolon after `do...while(...)` is optional.
+        self.optional_semicolon();
+        Ok(Stmt::DoWhile { body, condition })
     }
 
     fn for_stmt(&mut self) -> JsResult<Stmt> {

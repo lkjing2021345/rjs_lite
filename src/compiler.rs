@@ -249,6 +249,27 @@ impl<'a> Compiler<'a> {
                     self.backpatch(idx, break_target);
                 }
             }
+            Stmt::DoWhile { body, condition } => {
+                let loop_start = self.stream().len();
+                // The body must run at least once; `continue` jumps to the
+                // condition check.
+                self.loops.push(LoopContext {
+                    break_jumps: Vec::new(),
+                    continue_target: 0, // patched after body
+                });
+                self.emit_statements(body);
+                let continue_target = self.stream().len();
+                if let Some(ctx) = self.loops.last_mut() {
+                    ctx.continue_target = continue_target;
+                }
+                self.emit_expr(condition);
+                self.emit(Instruction::JumpIfTrue(loop_start));
+                let ctx = self.loops.pop().unwrap();
+                let break_target = self.stream().len();
+                for idx in ctx.break_jumps {
+                    self.backpatch(idx, break_target);
+                }
+            }
             Stmt::For {
                 init,
                 condition,
