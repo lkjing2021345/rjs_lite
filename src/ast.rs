@@ -197,6 +197,8 @@ pub enum Expr {
     Super,
     /// `...expr` in a call argument list or array literal.
     Spread(Box<Expr>),
+    /// Comma operator: `(a, b)` evaluates to `b`.
+    Sequence(Vec<Expr>),
 }
 
 /// One member of a class body.

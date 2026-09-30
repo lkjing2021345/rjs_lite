@@ -737,6 +737,14 @@ impl<'a> Compiler<'a> {
                 self.emit_expr(inner);
                 self.emit(Instruction::Spread);
             }
+            Expr::Sequence(exprs) => {
+                for (i, e) in exprs.iter().enumerate() {
+                    self.emit_expr(e);
+                    if i + 1 < exprs.len() {
+                        self.emit(Instruction::Pop);
+                    }
+                }
+            }
         }
     }
 

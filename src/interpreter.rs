@@ -1909,6 +1909,14 @@ impl Interpreter {
             // Spread is only valid in call arguments / array literals; as a
             // standalone expression it evaluates to its operand.
             Expr::Spread(inner) => self.eval_expr(inner),
+            // Comma operator: evaluate all, return the last.
+            Expr::Sequence(exprs) => {
+                let mut last = Value::Undefined;
+                for e in exprs {
+                    last = self.eval_expr(e)?;
+                }
+                Ok(last)
+            }
             Expr::Member { .. } | Expr::Index { .. } => self.get_target(expr),
         }
     }

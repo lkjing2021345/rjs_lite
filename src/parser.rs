@@ -79,7 +79,7 @@ impl Parser {
         } else if self.eat(&TokenKind::LeftBrace) {
             Ok(Stmt::Block(self.block()?))
         } else {
-            let e = self.expression()?;
+            let e = self.sequence()?;
             // ASI rule (ES 12.9.1): a semicolon is inserted before an
             // offending token only when it is separated from the previous
             // token by at least one LineTerminator (or is `}`/EOF). If the
@@ -759,6 +759,20 @@ impl Parser {
         self.assignment()
     }
 
+    /// Top-level expression: `assignment` followed by optional comma operators.
+    /// Used in `statement()` where `(a, b)` is a valid expression.
+    fn sequence(&mut self) -> JsResult<Expr> {
+        let mut exprs = vec![self.assignment()?];
+        while self.eat(&TokenKind::Comma) {
+            exprs.push(self.assignment()?);
+        }
+        if exprs.len() == 1 {
+            Ok(exprs.into_iter().next().unwrap())
+        } else {
+            Ok(Expr::Sequence(exprs))
+        }
+    }
+
     fn assignment(&mut self) -> JsResult<Expr> {
         // Destructuring assignment: `[a, b] = rhs` or `{ a, b } = rhs`.
         // Try to read the LHS as a binding pattern and only commit when a
@@ -1129,13 +1143,14 @@ impl Parser {
         loop {
             // Trailing comma: `f(1, 2,)`
             if self.at(&TokenKind::RightParen) {
+                self.eat(&TokenKind::RightParen);
                 break;
             }
             // Spread: `f(...args)`
             if self.eat(&TokenKind::DotDotDot) {
-                args.push(Expr::Spread(Box::new(self.expression()?)));
+                args.push(Expr::Spread(Box::new(self.assignment()?)));
             } else {
-                args.push(self.expression()?);
+                args.push(self.assignment()?);
             }
             if self.eat(&TokenKind::RightParen) {
                 break;
@@ -1177,7 +1192,7 @@ impl Parser {
                     return Ok(af);
                 }
                 self.pos = saved;
-                let e = self.expression()?;
+                let e = self.sequence()?;
                 self.expect(&TokenKind::RightParen)?;
                 Ok(e)
             }
