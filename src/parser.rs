@@ -675,13 +675,12 @@ impl Parser {
     /// is treated as a keyword inside generators.
     fn function_body(&mut self, generator: bool) -> JsResult<Vec<Stmt>> {
         self.expect(&TokenKind::LeftBrace)?;
-        if generator {
-            self.generator_depth += 1;
-        }
+        // `yield` is a keyword only in the immediate generator body; nested
+        // ordinary functions reset the context.
+        let saved = self.generator_depth;
+        self.generator_depth = if generator { saved + 1 } else { 0 };
         let body = self.block();
-        if generator {
-            self.generator_depth -= 1;
-        }
+        self.generator_depth = saved;
         body
     }
 
