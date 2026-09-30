@@ -12,6 +12,19 @@ pub fn parse(tokens: Vec<Token>) -> JsResult<Program> {
     .program()
 }
 
+/// Parse a single expression from source. Used to evaluate computed member
+/// keys, which are stored as source text in the AST.
+pub fn parse_expression(src: &str) -> JsResult<Expr> {
+    let tokens = crate::lexer::lex(src)?;
+    let mut parser = Parser {
+        tokens,
+        pos: 0,
+        strict: false,
+        generator_depth: 0,
+    };
+    parser.expression()
+}
+
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -1784,9 +1797,40 @@ impl Parser {
     fn key_expr_to_string(expr: &Expr) -> String {
         match expr {
             Expr::Identifier(s) => s.clone(),
-            Expr::String(s) => s.clone(),
+            Expr::String(s) => format!("{:?}", s),
             Expr::Number(n) => n.to_string(),
-            Expr::BigInt(s) => s.clone(),
+            Expr::BigInt(s) => format!("{s}n"),
+            Expr::Bool(b) => b.to_string(),
+            Expr::Null => "null".into(),
+            Expr::Undefined => "undefined".into(),
+            Expr::This => "this".into(),
+            Expr::Member { object, property } => {
+                format!("{}.{}", Self::key_expr_to_string(object), property)
+            }
+            Expr::Index { object, index } => format!(
+                "{}[{}]",
+                Self::key_expr_to_string(object),
+                Self::key_expr_to_string(index)
+            ),
+            Expr::Call { callee, args } => format!(
+                "{}({})",
+                Self::key_expr_to_string(callee),
+                args.iter()
+                    .map(Self::key_expr_to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Expr::Unary { op, expr } => {
+                let sym = match op {
+                    UnaryOp::Not => "!",
+                    UnaryOp::Negate => "-",
+                    UnaryOp::Plus => "+",
+                    UnaryOp::BitwiseNot => "~",
+                    UnaryOp::Void => "void ",
+                    UnaryOp::Delete => "delete ",
+                };
+                format!("{sym}{}", Self::key_expr_to_string(expr))
+            }
             other => format!("{:?}", other),
         }
     }

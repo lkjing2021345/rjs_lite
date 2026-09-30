@@ -1465,11 +1465,26 @@ impl Interpreter {
                 ..
             } = element
             {
-                ctor_body.push(Stmt::Expr(Expr::Assign {
-                    target: Box::new(Expr::Member {
+                // Computed instance-field names become `this[<expr>] = init`.
+                let target = if let Some(src) = name.strip_prefix("computed:") {
+                    match crate::parser::parse_expression(src) {
+                        Ok(key_expr) => Expr::Index {
+                            object: Box::new(Expr::This),
+                            index: Box::new(key_expr),
+                        },
+                        Err(_) => Expr::Member {
+                            object: Box::new(Expr::This),
+                            property: name.clone(),
+                        },
+                    }
+                } else {
+                    Expr::Member {
                         object: Box::new(Expr::This),
                         property: name.clone(),
-                    }),
+                    }
+                };
+                ctor_body.push(Stmt::Expr(Expr::Assign {
+                    target: Box::new(target),
                     value: Box::new(init.as_deref().cloned().unwrap_or(Expr::Undefined)),
                 }));
             }
@@ -1496,7 +1511,9 @@ impl Interpreter {
                     );
                     let target = if *is_static { &class_obj } else { &proto_obj };
                     Self::tag_super(&function, &parent);
-                    Self::define_non_enumerable(target, name, function);
+                    let name = self.resolve_key(name)?;
+                    Self::set_function_name(&function, &name);
+                    Self::define_non_enumerable(target, &name, function);
                 }
                 ClassElement::Getter {
                     name,
@@ -1506,6 +1523,7 @@ impl Interpreter {
                     let function = self.make_function(Vec::new(), body.clone());
                     let target = if *is_static { &class_obj } else { &proto_obj };
                     Self::tag_super(&function, &parent);
+                    let name = self.resolve_key(name)?;
                     let key = format!("__get_{name}");
                     Self::define_non_enumerable(target, &key, function);
                 }
@@ -1518,6 +1536,7 @@ impl Interpreter {
                     let function = self.make_function(vec![param.clone()], body.clone());
                     let target = if *is_static { &class_obj } else { &proto_obj };
                     Self::tag_super(&function, &parent);
+                    let name = self.resolve_key(name)?;
                     let key = format!("__set_{name}");
                     Self::define_non_enumerable(target, &key, function);
                 }
@@ -1531,7 +1550,8 @@ impl Interpreter {
                         Some(expr) => self.eval_expr(expr)?,
                         None => Value::Undefined,
                     };
-                    Self::define_non_enumerable(&class_obj, name, value);
+                    let name = self.resolve_key(name)?;
+                    Self::define_non_enumerable(&class_obj, &name, value);
                 }
                 ClassElement::Field { .. } => {}
             }
@@ -1727,6 +1747,21 @@ impl Interpreter {
             self.closures
                 .insert(Rc::as_ptr(obj) as usize, self.env.clone());
         }
+    }
+
+    /// Resolve a (possibly computed) member key placeholder to its runtime
+    /// string form. Computed keys are stored as `computed:<source>`.
+    fn resolve_key(&mut self, key: &str) -> JsResult<String> {
+        if let Some(src) = key.strip_prefix("computed:") {
+            // Best-effort: if the stored key source is not valid JS (complex
+            // expressions fall back to their Rust debug form), keep it literal.
+            if let Ok(expr) = crate::parser::parse_expression(src) {
+                let v = self.eval_expr(&expr)?;
+                return self.to_string_value(&v);
+            }
+            return Ok(src.to_string());
+        }
+        Ok(key.to_string())
     }
 
     /// Iterate a value using the `Symbol.iterator` protocol, returning the
@@ -2098,11 +2133,15 @@ impl Interpreter {
                         // Computed key: `computed:<expr>` — evaluate the key.
                         Some(key) if key.starts_with("computed:") => {
                             let v = self.eval_expr(e)?;
-                            obj.borrow_mut().props.insert(key.clone(), v);
+                            let resolved = self.resolve_key(key)?;
+                            Self::infer_function_name(&v, &resolved);
+                            obj.borrow_mut().props.insert(resolved, v);
                         }
                         // Accessor: `__accessor__<name>` — install as getter/setter.
                         Some(key) if key.starts_with("__accessor__") => {
-                            let name = key.strip_prefix("__accessor__").unwrap_or("");
+                            let raw = key.strip_prefix("__accessor__").unwrap_or("");
+                            let resolved = self.resolve_key(raw)?;
+                            let name = resolved.as_str();
                             let v = self.eval_expr(e)?;
                             // Determine if it's a getter (no params) or setter (1 param).
                             let is_getter = if let Value::Object(fobj) = &v {
