@@ -502,6 +502,16 @@ impl Interpreter {
             );
             Self::define_non_enumerable(
                 &self.array_proto,
+                "Symbol.iterator",
+                self.native_method("Array.prototype.Symbol.iterator"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
+                "values",
+                self.native_method("Array.prototype.Symbol.iterator"),
+            );
+            Self::define_non_enumerable(
+                &self.array_proto,
                 "indexOf",
                 self.native_method("Array.prototype.indexOf"),
             );
@@ -802,6 +812,11 @@ impl Interpreter {
             Self::define_non_enumerable(&number_ctor, "toString", self.native_method("Number.prototype.toString"));
         }
         Self::define_non_enumerable(&self.boolean_proto, "toString", self.native_method("Boolean.prototype.toString"));
+        Self::define_non_enumerable(
+            &self.string_proto,
+            "Symbol.iterator",
+            self.native_method("String.prototype.Symbol.iterator"),
+        );
         Self::define_non_enumerable(&self.boolean_proto, "valueOf", self.native_method("Boolean.prototype.valueOf"));
         Self::define_non_enumerable(&self.error_proto, "toString", self.native_method("Error.prototype.toString"));
         self.error_proto
@@ -1690,6 +1705,39 @@ impl Interpreter {
         }
     }
 
+    /// Iterate a value using the `Symbol.iterator` protocol, returning the
+    /// collected values. Arrays without a custom iterator take a fast path.
+    pub(crate) fn iterate_values(&mut self, value: &Value) -> JsResult<Vec<Value>> {
+        if let Value::String(s) = value {
+            return Ok(s.chars().map(|c| Value::String(c.to_string())).collect());
+        }
+        let Value::Object(o) = value else {
+            return Ok(Vec::new());
+        };
+        let iter_method = self.get_property_on_value(value, "Symbol.iterator");
+        if iter_method.is_callable() {
+            let iterator = self.call(iter_method, Vec::new(), value.clone(), false)?;
+            let next = self.get_property_on_value(&iterator, "next");
+            let mut out = Vec::new();
+            loop {
+                let step = self.call(next.clone(), Vec::new(), iterator.clone(), false)?;
+                let done = self.get_property_on_value(&step, "done").is_truthy();
+                if done {
+                    break;
+                }
+                out.push(self.get_property_on_value(&step, "value"));
+            }
+            return Ok(out);
+        }
+        if let Internal::Array(items) = &o.borrow().internal {
+            return Ok(items
+                .iter()
+                .map(|v| v.clone().unwrap_or(Value::Undefined))
+                .collect());
+        }
+        Ok(Vec::new())
+    }
+
     /// ECMAScript ToPrimitive: for objects, try `valueOf` then `toString`
     /// (calling user-defined methods), falling back to the object itself.
     pub(crate) fn to_primitive_value(&mut self, value: &Value) -> JsResult<Value> {
@@ -1950,16 +1998,19 @@ impl Interpreter {
             match arg {
                 Expr::Spread(inner) => {
                     let v = self.eval_expr(inner)?;
-                    if let Value::Object(o) = &v {
-                        if let Internal::Array(items) = &o.borrow().internal {
-                            for item in items {
-                                out.push(item.clone().unwrap_or(Value::Undefined));
-                            }
-                        } else {
-                            out.push(v.clone());
+                    // Fast path: plain array without a custom iterator.
+                    let custom = self.get_property_on_value(&v, "Symbol.iterator").is_callable();
+                    if let Value::Object(o) = &v
+                        && !custom
+                        && let Internal::Array(items) = &o.borrow().internal
+                    {
+                        for item in items {
+                            out.push(item.clone().unwrap_or(Value::Undefined));
                         }
-                    } else {
-                        out.push(v);
+                        continue;
+                    }
+                    for item in self.iterate_values(&v)? {
+                        out.push(item);
                     }
                 }
                 other => out.push(self.eval_expr(other)?),
@@ -1992,18 +2043,12 @@ impl Interpreter {
                 for e in items {
                     match e {
                         None => values.push(None),
-                        // Spread element: `[...iterable]` — flatten arrays.
+                        // Spread element: `[...iterable]` via the iterator protocol.
                         Some(Expr::Spread(inner)) => {
                             let v = self.eval_expr(inner)?;
-                            if let Value::Object(o) = &v {
-                                if let Internal::Array(items) = &o.borrow().internal {
-                                    for item in items {
-                                        values.push(Some(item.clone().unwrap_or(Value::Undefined)));
-                                    }
-                                    continue;
-                                }
+                            for item in self.iterate_values(&v)? {
+                                values.push(Some(item));
                             }
-                            values.push(Some(v));
                         }
                         Some(expr) => values.push(Some(self.eval_expr(expr)?)),
                     }
@@ -3007,6 +3052,61 @@ impl Interpreter {
                     }
                 }
                 Ok(self.make_promise(value, fulfilled))
+            }
+            "Array.prototype.Symbol.iterator" | "String.prototype.Symbol.iterator" => {
+                let items: Vec<Option<Value>> =
+                    if let Value::Object(o) = &this_value {
+                        if let Internal::Array(items) = &o.borrow().internal {
+                            items.clone()
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        // Strings iterate per code point.
+                        this_value
+                            .to_string()
+                            .chars()
+                            .map(|c| Some(Value::String(c.to_string())))
+                            .collect()
+                    };
+                let iter = Object::with_internal(Internal::Array(items));
+                iter.borrow_mut().proto = Some(self.object_proto.clone());
+                iter.borrow_mut()
+                    .props
+                    .insert("__iter_index".into(), Value::Number(0.0));
+                Self::define_non_enumerable(
+                    &iter,
+                    "next",
+                    self.native_method("ArrayIterator.next"),
+                );
+                Ok(Value::Object(iter))
+            }
+            "ArrayIterator.next" => {
+                let (items, index) = if let Value::Object(o) = &this_value {
+                    let idx = match o.borrow().props.get("__iter_index") {
+                        Some(Value::Number(n)) => *n,
+                        _ => 0.0,
+                    };
+                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                        items.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    (items, idx)
+                } else {
+                    (Vec::new(), 0.0)
+                };
+                if (index as usize) < items.len() {
+                    let v = items[index as usize].clone().unwrap_or(Value::Undefined);
+                    if let Value::Object(o) = &this_value {
+                        o.borrow_mut()
+                            .props
+                            .insert("__iter_index".into(), Value::Number(index + 1.0));
+                    }
+                    Ok(Self::iterator_result(v, false))
+                } else {
+                    Ok(Self::iterator_result(Value::Undefined, true))
+                }
             }
             "Promise.prototype.catch" => self.call_native(
                 "Promise.prototype.then",
