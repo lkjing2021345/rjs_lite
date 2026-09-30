@@ -1011,7 +1011,13 @@ impl Parser {
             self.postfix(new_expr)
         } else if self.eat(&TokenKind::Await) {
             Ok(Expr::Await(Box::new(self.unary()?)))
-        } else if self.eat(&TokenKind::Yield) {
+        } else if self.at(&TokenKind::Yield)
+            && !self
+                .next_is(&TokenKind::RightParen)
+                && !self.next_is(&TokenKind::Comma)
+                && !self.next_is(&TokenKind::RightBracket)
+        {
+            self.advance();
             // `yield`, `yield expr`, or `yield* expr` (delegation is treated
             // as a plain yield for now). A line terminator after `yield`
             // forces it to be a bare `yield` via ASI.
@@ -1195,6 +1201,9 @@ impl Parser {
             TokenKind::Super => Ok(Expr::Super),
             TokenKind::Class => self.class_expr(),
             TokenKind::Identifier(s) => Ok(Expr::Identifier(s)),
+            // `yield`/`await` as identifiers in non-strict mode.
+            TokenKind::Yield => Ok(Expr::Identifier("yield".into())),
+            TokenKind::Await => Ok(Expr::Identifier("await".into())),
             TokenKind::Function => self.function_expr(),
             TokenKind::Async => self.async_function_expr(),
             TokenKind::RegExp(pattern, flags) => Ok(Expr::RegExp {
@@ -1615,6 +1624,8 @@ impl Parser {
                 }
                 Some(Pattern::ObjectPattern(entries))
             }
+            // `a.b = v`, `a[0] = v` — non-identifier assignment targets.
+            Expr::Member { .. } | Expr::Index { .. } => Some(Pattern::AssignTarget(expr.clone())),
             _ => None,
         }
     }
@@ -1687,10 +1698,12 @@ impl Parser {
     }
     fn identifier_token(&mut self) -> JsResult<(String, Span)> {
         let token = self.advance().clone();
-        if let TokenKind::Identifier(name) = token.kind {
-            Ok((name, token.span))
-        } else {
-            Err(JsError::parse("expected identifier", token.span))
+        match token.kind {
+            TokenKind::Identifier(name) => Ok((name, token.span)),
+            // `yield` and `await` are valid identifiers in non-strict mode.
+            TokenKind::Yield => Ok(("yield".into(), token.span)),
+            TokenKind::Await => Ok(("await".into(), token.span)),
+            _ => Err(JsError::parse("expected identifier", token.span)),
         }
     }
 

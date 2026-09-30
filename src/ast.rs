@@ -15,6 +15,8 @@ pub enum Pattern {
     ObjectPattern(Vec<ObjectPatternEntry>),
     Rest(Box<Pattern>),
     Default(Box<Pattern>, Expr),
+    /// A non-identifier assignment target: `a.b = v`, `a[0] = v`, etc.
+    AssignTarget(Expr),
 }
 
 /// One `key: pattern` entry of an object destructuring pattern. The shorthand

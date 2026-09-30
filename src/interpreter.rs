@@ -1503,6 +1503,28 @@ impl Interpreter {
             // A bare `Rest` only appears inside a container; binding it
             // directly treats the incoming value as a single element.
             Pattern::Rest(inner) => self.bind_pattern(inner, value, mutable),
+            // `a.b = v`, `a[0] = v` — non-identifier assignment targets.
+            Pattern::AssignTarget(expr) => {
+                match expr {
+                    Expr::Index { object, index } => {
+                        let obj = self.eval_expr(object)?;
+                        let key = self.eval_expr(index)?;
+                        if let Value::Object(obj_ref) = &obj {
+                            let key_str = key.to_string();
+                            self.set_property(obj_ref, &key_str, value);
+                        }
+                        Ok(())
+                    }
+                    Expr::Member { object, property, .. } => {
+                        let obj = self.eval_expr(object)?;
+                        if let Value::Object(obj_ref) = &obj {
+                            self.set_property(obj_ref, property, value);
+                        }
+                        Ok(())
+                    }
+                    _ => Ok(()),
+                }
+            }
             Pattern::ArrayPattern(elements) => {
                 let mut index = 0usize;
                 for element in elements {
