@@ -705,6 +705,7 @@ impl Parser {
             stmts.push(self.statement()?);
         }
         self.expect(&TokenKind::RightBrace)?;
+        self.check_redeclarations(&stmts)?;
         Ok(stmts)
     }
 
@@ -716,9 +717,108 @@ impl Parser {
         // ordinary functions reset the context.
         let saved = self.generator_depth;
         self.generator_depth = if generator { saved + 1 } else { 0 };
-        let body = self.block();
+        let body = self.block()?;
         self.generator_depth = saved;
-        body
+        self.check_redeclarations(&body)?;
+        Ok(body)
+    }
+
+    /// Early-error check: LexicallyDeclaredNames and VarDeclaredNames of a
+    /// statement list must not intersect (§13.2.1 / §13.2.2).
+    fn check_redeclarations(&self, stmts: &[Stmt]) -> JsResult<()> {
+        let mut lex = Vec::new();
+        let mut var_names = Vec::new();
+        for s in stmts {
+            match s {
+                Stmt::VarDecl { name, mutable, .. } => {
+                    if let Pattern::Identifier(id) = name {
+                        if *mutable {
+                            var_names.push(id.clone());
+                        } else {
+                            lex.push(id.clone());
+                        }
+                    } else {
+                        Self::collect_pattern_names(name, mutable, &mut lex, &mut var_names);
+                    }
+                }
+                Stmt::VarDecls { declarations, mutable } => {
+                    for (pat, _) in declarations {
+                        if let Pattern::Identifier(id) = pat {
+                            if *mutable {
+                                var_names.push(id.clone());
+                            } else {
+                                lex.push(id.clone());
+                            }
+                        } else {
+                            Self::collect_pattern_names(pat, mutable, &mut lex, &mut var_names);
+                        }
+                    }
+                }
+                Stmt::FunctionDecl { name, .. } => {
+                    var_names.push(name.clone());
+                }
+                Stmt::ClassDecl { name, .. } => {
+                    lex.push(name.clone());
+                }
+                _ => {}
+            }
+        }
+        for n in &lex {
+            if var_names.contains(n) {
+                return Err(self.error(&format!(
+                    "Identifier '{}' has already been declared", n
+                )));
+            }
+        }
+        for i in 0..lex.len() {
+            if lex[i + 1..].contains(&lex[i]) {
+                return Err(self.error(&format!(
+                    "Identifier '{}' has already been declared", lex[i]
+                )));
+            }
+        }
+        for i in 0..var_names.len() {
+            if var_names[i + 1..].contains(&var_names[i]) {
+                return Err(self.error(&format!(
+                    "Identifier '{}' has already been declared", var_names[i]
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_pattern_names(
+        pat: &Pattern,
+        mutable: &bool,
+        lex: &mut Vec<String>,
+        var_names: &mut Vec<String>,
+    ) {
+        match pat {
+            Pattern::Identifier(id) => {
+                if *mutable {
+                    var_names.push(id.clone());
+                } else {
+                    lex.push(id.clone());
+                }
+            }
+            Pattern::ArrayPattern(items) => {
+                for item in items {
+                    Self::collect_pattern_names(item, mutable, lex, var_names);
+                }
+            }
+            Pattern::ObjectPattern(entries) => {
+                for entry in entries {
+                    Self::collect_pattern_names(&entry.value, mutable, lex, var_names);
+                }
+            }
+            Pattern::Rest(inner) => {
+                Self::collect_pattern_names(inner, mutable, lex, var_names);
+            }
+            Pattern::Default(inner, _) => {
+                Self::collect_pattern_names(inner, mutable, lex, var_names);
+            }
+            Pattern::AssignTarget(_) => {}
+        }
     }
 
     fn params(&mut self) -> JsResult<Vec<Pattern>> {
