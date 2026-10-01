@@ -51,6 +51,8 @@ struct Frame {
     saved_stack: Vec<Value>,
     /// Saved for-in iterator state (restored on return).
     saved_forin: Option<(Value, Vec<String>, usize)>,
+    /// Saved for-of iterator state (restored on return).
+    saved_forof: Option<(Vec<Value>, usize)>,
     /// Saved exception handler stack (restored on return).
     saved_handlers: Vec<Handler>,
 }
@@ -88,6 +90,8 @@ pub struct Vm {
     native: Interpreter,
     /// For-in iterator state: (object, keys, index).
     forin: Option<(Value, Vec<String>, usize)>,
+    /// For-of iterator state: (values, index).
+    forof: Option<(Vec<Value>, usize)>,
     /// Pending exception, if any.
     #[allow(dead_code)]
     pending: Option<PendingException>,
@@ -128,6 +132,7 @@ impl Vm {
             program: Program::new(),
             native,
             forin: None,
+            forof: None,
             pending: None,
             step_limit,
             steps: 0,
@@ -256,6 +261,7 @@ impl Vm {
                     self.env = frame.saved_env;
                     self.stack = frame.saved_stack;
                     self.forin = frame.saved_forin;
+                    self.forof = frame.saved_forof;
                     self.handlers = frame.saved_handlers;
                 }
                 return Ok(last_value);
@@ -371,6 +377,7 @@ impl Vm {
         self.env = frame.saved_env;
         self.stack = frame.saved_stack;
         self.forin = frame.saved_forin;
+        self.forof = frame.saved_forof;
         self.handlers = frame.saved_handlers;
         ret
     }
@@ -782,6 +789,27 @@ impl Vm {
                 // (the previous instruction).
                 self.pc -= 1;
             }
+            Instruction::ForOf(target) => {
+                if self.forof.is_none() {
+                    let obj = self.pop();
+                    let values = self.native.iterate_values(&obj)?;
+                    self.forof = Some((values, 0));
+                }
+                let Some((values, index)) = &mut self.forof else {
+                    return Err(JsError::runtime("for-of iterator is not active"));
+                };
+                if *index >= values.len() {
+                    self.forof = None;
+                    self.pc = target;
+                } else {
+                    let val = values[*index].clone();
+                    *index += 1;
+                    self.push(val);
+                }
+            }
+            Instruction::ForOfEnd => {
+                self.pc -= 1;
+            }
 
             // --- Template literal ---
             Instruction::ConcatTemplate => {
@@ -927,6 +955,7 @@ impl Vm {
                     saved_env: previous_env,
                     saved_stack: self.stack.clone(),
                     saved_forin: self.forin.take(),
+                    saved_forof: self.forof.take(),
                     saved_handlers: std::mem::take(&mut self.handlers),
                 };
                 self.frames.push(frame);

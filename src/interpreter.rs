@@ -1318,6 +1318,26 @@ impl Interpreter {
                 }
                 Ok(Flow::Value(last))
             }
+            Stmt::ForOf {
+                left,
+                right,
+                body,
+                ..
+            } => {
+                let obj = self.eval_expr(right)?;
+                let values = self.iterate_values(&obj)?;
+                let mut last = Value::Undefined;
+                for value in values {
+                    self.assign_target(left, value)?;
+                    match self.with_child(body)? {
+                        Flow::Value(v) => last = v,
+                        Flow::Break => break,
+                        Flow::Continue => continue,
+                        r @ (Flow::Return(_) | Flow::Throw(_) | Flow::Yield(_)) => return Ok(r),
+                    }
+                }
+                Ok(Flow::Value(last))
+            }
             Stmt::Switch {
                 discriminant,
                 cases,
@@ -2035,6 +2055,7 @@ impl Interpreter {
             | Stmt::DoWhile { body, .. }
             | Stmt::For { body, .. }
             | Stmt::ForIn { body, .. }
+            | Stmt::ForOf { body, .. }
             | Stmt::With { body, .. } => Self::declares_arguments(body),
             Stmt::Labeled { body, .. } => {
                 Self::declares_arguments(std::slice::from_ref(body))

@@ -146,6 +146,9 @@ pub enum Instruction {
     // --- For-in ---
     ForIn(usize),
     ForInEnd,
+    // --- For-of ---
+    ForOf(usize),
+    ForOfEnd,
 
     // --- Template literal ---
     ConcatTemplate,

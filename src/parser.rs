@@ -555,6 +555,16 @@ impl Parser {
                     body: self.iteration_body_as_block()?,
                 });
             }
+            if self.eat(&TokenKind::Of) {
+                let right = self.expression()?;
+                self.expect(&TokenKind::RightParen)?;
+                return Ok(Stmt::ForOf {
+                    left: Box::new(expr),
+                    right,
+                    body: self.iteration_body_as_block()?,
+                    await_: false,
+                });
+            }
             self.expect(&TokenKind::Semicolon)?;
             Some(Box::new(Stmt::Expr(expr)))
         };
@@ -572,6 +582,19 @@ impl Parser {
                         body: self.iteration_body_as_block()?,
                     });
                 }
+                if self.eat(&TokenKind::Of) {
+                    let right = self.expression()?;
+                    self.expect(&TokenKind::RightParen)?;
+                    return Ok(Stmt::ForOf {
+                        left: Box::new(match name {
+                            Pattern::Identifier(id) => Expr::Identifier(id.clone()),
+                            p => return Err(self.error("for-of binding must be an identifier")),
+                        }),
+                        right,
+                        body: self.iteration_body_as_block()?,
+                        await_: false,
+                    });
+                }
             }
             if let Stmt::VarDecls { declarations, .. } = init.as_ref() {
                 if declarations.len() == 1 && self.eat(&TokenKind::In) {
@@ -584,6 +607,19 @@ impl Parser {
                         left: Box::new(Expr::Identifier(ident.clone())),
                         right,
                         body: self.iteration_body_as_block()?,
+                    });
+                }
+                if declarations.len() == 1 && self.eat(&TokenKind::Of) {
+                    let right = self.expression()?;
+                    self.expect(&TokenKind::RightParen)?;
+                    return Ok(Stmt::ForOf {
+                        left: Box::new(match &declarations[0].0 {
+                            Pattern::Identifier(id) => Expr::Identifier(id.clone()),
+                            _ => return Err(self.error("for-of binding must be an identifier")),
+                        }),
+                        right,
+                        body: self.iteration_body_as_block()?,
+                        await_: false,
                     });
                 }
             }

@@ -84,6 +84,13 @@ pub enum Stmt {
         right: Expr,
         body: Vec<Stmt>,
     },
+    ForOf {
+        left: Box<Expr>,
+        right: Expr,
+        body: Vec<Stmt>,
+        /// True for `for await...of`.
+        await_: bool,
+    },
     Switch {
         discriminant: Expr,
         cases: Vec<(Expr, Vec<Stmt>)>,

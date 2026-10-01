@@ -341,6 +341,24 @@ impl<'a> Compiler<'a> {
                     self.backpatch(idx, break_target);
                 }
             }
+            Stmt::ForOf { left, right, body, .. } => {
+                self.emit_expr(right);
+                let loop_start = self.stream().len();
+                let header_idx = self.emit(Instruction::ForOf(usize::MAX));
+                self.loops.push(LoopContext {
+                    break_jumps: Vec::new(),
+                    continue_target: loop_start,
+                });
+                self.emit_target(left);
+                self.emit_statements(body);
+                let ctx = self.loops.pop().unwrap();
+                self.emit(Instruction::Jump(loop_start));
+                let break_target = self.stream().len();
+                self.program.instructions[header_idx] = Instruction::ForOf(break_target);
+                for idx in ctx.break_jumps {
+                    self.backpatch(idx, break_target);
+                }
+            }
             Stmt::Switch {
                 discriminant,
                 cases,
