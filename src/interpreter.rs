@@ -134,6 +134,10 @@ pub struct Interpreter {
     pub(crate) output_limit: Option<usize>,
     pub(crate) output_truncated: bool,
     pub(crate) strict: bool,
+    /// True while executing a function whose parameter list contains a binding
+    /// named `arguments`. A direct `eval` that declares `var arguments` (or a
+    /// function named `arguments`) is then a SyntaxError (§19.2.1.3).
+    pub(crate) param_named_arguments: bool,
     /// Optional bridge: when the VM owns the interpreter, native methods
     /// that call JS callbacks are routed through this hook so the VM can
     /// execute VM-compiled functions.
@@ -210,6 +214,7 @@ impl Interpreter {
             output_limit,
             output_truncated: false,
             strict: false,
+            param_named_arguments: false,
             call_host: None,
         };
         this.install_builtins();
@@ -243,6 +248,14 @@ impl Interpreter {
         self.define_global("Infinity", Value::Number(f64::INFINITY), false);
         self.define_global("NaN", Value::Number(f64::NAN), false);
         self.define_global("undefined", Value::Undefined, false);
+        // `Infinity`, `NaN` and `undefined` are non-writable, non-enumerable
+        // and non-configurable (§19.1.1).
+        for name in ["Infinity", "NaN", "undefined"] {
+            self.global
+                .borrow_mut()
+                .non_enumerable_props
+                .insert("__configurable_".to_string() + name);
+        }
         // `globalThis` — the global object itself.
         self.define_global("globalThis", Value::Object(self.global.clone()), false);
 
@@ -264,6 +277,13 @@ impl Interpreter {
             ("SQRT2", std::f64::consts::SQRT_2),
         ] {
             math.borrow_mut().props.insert(name.to_string(), Value::Number(value));
+            // Math constants are non-writable, non-enumerable, non-configurable.
+            math.borrow_mut()
+                .non_enumerable_props
+                .insert(name.to_string());
+            math.borrow_mut()
+                .non_enumerable_props
+                .insert("__configurable_".to_string() + name);
         }
         Self::define_non_enumerable(&math, "abs", self.native_method("Math.abs"));
         Self::define_non_enumerable(&math, "acos", self.native_method("Math.acos"));
@@ -888,6 +908,25 @@ impl Interpreter {
         object.non_enumerable_props.insert(property.to_string());
     }
 
+    /// Record the `enumerable`/`configurable` flags of a freshly defined
+    /// property using the `non_enumerable_props` marker convention.
+    fn record_descriptor_flags(
+        object: &ObjectRef,
+        property: &str,
+        enumerable: bool,
+        configurable: bool,
+    ) {
+        let mut object = object.borrow_mut();
+        if !enumerable {
+            object.non_enumerable_props.insert(property.to_string());
+        }
+        if !configurable {
+            object
+                .non_enumerable_props
+                .insert("__configurable_".to_string() + property);
+        }
+    }
+
     fn define_native(&mut self, name: &'static str) {
         let value = self.native_method(name);
         self.define_global(name, value, false);
@@ -908,6 +947,16 @@ impl Interpreter {
             .borrow_mut()
             .props
             .insert(name.to_string(), value);
+    }
+
+    /// Define a global `var`/function/class binding. Such bindings are
+    /// non-configurable, so `delete <name>` returns false (§9.1.1.4.5).
+    fn define_global_var(&mut self, name: &str, value: Value) {
+        let mut global = self.global.borrow_mut();
+        global.props.insert(name.to_string(), value);
+        global
+            .non_enumerable_props
+            .insert("__configurable_".to_string() + name);
     }
 
     pub(crate) fn same_value_zero(left: &Value, right: &Value) -> bool {
@@ -1022,7 +1071,7 @@ impl Interpreter {
                         .borrow_mut()
                         .define(name.clone(), value.clone(), true);
                     if self.env.borrow().parent.is_none() {
-                        self.global.borrow_mut().props.insert(name.clone(), value);
+                        self.define_global_var(name, value);
                     }
                 }
             }
@@ -1095,7 +1144,7 @@ impl Interpreter {
                     .borrow_mut()
                     .define(name.clone(), value.clone(), false);
                 if self.env.borrow().parent.is_none() {
-                    self.global.borrow_mut().props.insert(name.clone(), value);
+                    self.define_global_var(name, value);
                 }
                 Ok(Flow::Value(Value::Undefined))
             }
@@ -1109,7 +1158,7 @@ impl Interpreter {
                     .borrow_mut()
                     .define(name.clone(), class.clone(), false);
                 if self.env.borrow().parent.is_none() {
-                    self.global.borrow_mut().props.insert(name.clone(), class);
+                    self.define_global_var(name, class);
                 }
                 Ok(Flow::Value(Value::Undefined))
             }
@@ -1890,6 +1939,109 @@ impl Interpreter {
         }
     }
 
+    /// Bind a call's parameters and construct its `arguments` object.
+    fn bind_call_params(
+        &mut self,
+        params: &[Pattern],
+        args: &[Value],
+        func: &ObjectRef,
+    ) -> JsResult<()> {
+        for (index, pattern) in params.iter().enumerate() {
+            if let Pattern::Rest(inner) = pattern {
+                let rest: Vec<Option<Value>> = args
+                    .iter()
+                    .skip(index)
+                    .map(|v| Some(v.clone()))
+                    .collect();
+                let arr = Object::with_internal(Internal::Array(rest));
+                arr.borrow_mut().proto = Some(self.array_proto.clone());
+                self.bind_pattern(inner, Value::Object(arr), true)?;
+                break;
+            }
+            let value = args.get(index).cloned().unwrap_or(Value::Undefined);
+            self.bind_pattern(pattern, value, true)?;
+        }
+        // Build the `arguments` object (constructors have one too).
+        let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
+        let args_obj = Object::with_internal(Internal::Array(slots));
+        args_obj.borrow_mut().proto = Some(self.object_proto.clone());
+        if self.strict {
+            // Strict-mode `arguments.callee` is a poison-pill accessor: any
+            // read or write throws a TypeError.
+            args_obj.borrow_mut().is_strict_arguments = true;
+        } else {
+            Interpreter::define_non_enumerable(
+                &args_obj,
+                "callee",
+                Value::Object(func.clone()),
+            );
+        }
+        self.env
+            .borrow_mut()
+            .define("arguments".into(), Value::Object(args_obj), true);
+        Ok(())
+    }
+
+    /// Whether a binding pattern introduces a binding with the given name.
+    fn pattern_binds_name(pattern: &Pattern, name: &str) -> bool {
+        match pattern {
+            Pattern::Identifier(n) => n == name,
+            Pattern::Default(inner, _) => Self::pattern_binds_name(inner, name),
+            Pattern::Rest(inner) => Self::pattern_binds_name(inner, name),
+            Pattern::ArrayPattern(entries) => entries
+                .iter()
+                .any(|p| Self::pattern_binds_name(p, name)),
+            Pattern::ObjectPattern(entries) => entries
+                .iter()
+                .any(|e| Self::pattern_binds_name(&e.value, name)),
+            Pattern::AssignTarget(_) => false,
+        }
+    }
+
+    /// Whether a statement list declares `var arguments` or a function named
+    /// `arguments` (used for the direct-eval early error).
+    fn declares_arguments(statements: &[Stmt]) -> bool {
+        statements.iter().any(|stmt| match stmt {
+            Stmt::VarDecl { name, .. } => Self::pattern_binds_name(name, "arguments"),
+            Stmt::VarDecls { declarations, .. } => declarations
+                .iter()
+                .any(|(p, _)| Self::pattern_binds_name(p, "arguments")),
+            Stmt::FunctionDecl { name, .. } => name == "arguments",
+            Stmt::Block(inner) => Self::declares_arguments(inner),
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::declares_arguments(then_branch)
+                    || Self::declares_arguments(else_branch)
+            }
+            Stmt::While { body, .. }
+            | Stmt::DoWhile { body, .. }
+            | Stmt::For { body, .. }
+            | Stmt::ForIn { body, .. }
+            | Stmt::With { body, .. } => Self::declares_arguments(body),
+            Stmt::Labeled { body, .. } => {
+                Self::declares_arguments(std::slice::from_ref(body))
+            }
+            Stmt::Try {
+                block,
+                catch_block,
+                finally_block,
+                ..
+            } => {
+                Self::declares_arguments(block)
+                    || catch_block
+                        .as_ref()
+                        .is_some_and(|b| Self::declares_arguments(b))
+                    || finally_block
+                        .as_ref()
+                        .is_some_and(|b| Self::declares_arguments(b))
+            }
+            _ => false,
+        })
+    }
+
     /// Bind `value` against a destructuring `pattern`, defining each leaf
     /// identifier in the current environment. Used by variable declarations
     /// and function parameter binding.
@@ -1905,7 +2057,7 @@ impl Interpreter {
                     .borrow_mut()
                     .define(name.clone(), value.clone(), mutable);
                 if self.env.borrow().parent.is_none() {
-                    self.global.borrow_mut().props.insert(name.clone(), value);
+                    self.define_global_var(name, value);
                 }
                 Ok(())
             }
@@ -2372,32 +2524,43 @@ impl Interpreter {
                 Ok(Value::Object(obj))
             }
             Expr::Unary { op, expr } => {
+                // `delete` must not evaluate its operand as a value: an
+                // unresolvable identifier is not a ReferenceError here.
+                if *op == UnaryOp::Delete {
+                    return match expr.as_ref() {
+                        // `delete super.x` is a ReferenceError (§13.5.1.2).
+                        Expr::Member { object, .. } if matches!(object.as_ref(), Expr::Super) => {
+                            Err(JsError::reference_error(
+                                "cannot delete a super property",
+                            ))
+                        }
+                        Expr::Index { object, .. } if matches!(object.as_ref(), Expr::Super) => {
+                            Err(JsError::reference_error(
+                                "cannot delete a super property",
+                            ))
+                        }
+                        Expr::Member { object, property } => {
+                            let obj = self.eval_expr(object)?;
+                            self.delete_property(&obj, property)
+                        }
+                        Expr::Index { object, index } => {
+                            let obj = self.eval_expr(object)?;
+                            let key = self.eval_expr(index)?.to_string();
+                            self.delete_property(&obj, &key)
+                        }
+                        // `delete identifier` is a SyntaxError in strict mode
+                        // (caught by the parser); in sloppy mode it returns
+                        // false for a non-configurable binding and true
+                        // otherwise.
+                        Expr::Identifier(name) => Ok(Value::Bool(self.delete_identifier(name))),
+                        _ => Ok(Value::Bool(true)),
+                    };
+                }
                 let value = self.eval_expr(expr)?;
                 match op {
                     UnaryOp::Not => Ok(Value::Bool(!value.is_truthy())),
                     UnaryOp::Negate => Ok(Value::Number(-value.to_number())),
-                    UnaryOp::Delete => {
-                        match expr.as_ref() {
-                            Expr::Member { object, property } => {
-                                let obj = self.eval_expr(object)?;
-                                if let Value::Object(ref o) = obj {
-                                    let existed = o.borrow_mut().props.remove(property);
-                                    return Ok(Value::Bool(existed.is_some()));
-                                }
-                                Ok(Value::Bool(true))
-                            }
-                            Expr::Index { object, index } => {
-                                let obj = self.eval_expr(object)?;
-                                let key = self.eval_expr(index)?.to_string();
-                                if let Value::Object(ref o) = obj {
-                                    let existed = o.borrow_mut().props.remove(&key);
-                                    return Ok(Value::Bool(existed.is_some()));
-                                }
-                                Ok(Value::Bool(true))
-                            }
-                            _ => Ok(Value::Bool(true)),
-                        }
-                    }
+                    UnaryOp::Delete => unreachable!("handled above"),
                     UnaryOp::Void => Ok(Value::Undefined),
                     UnaryOp::BitwiseNot => Ok(Value::Number(
                         !(value.to_number() as i32) as f64,
@@ -2670,7 +2833,18 @@ impl Interpreter {
                         "{name} is not defined"
                     )));
                 }
-                self.env.borrow_mut().assign(name, value)
+                // An implicit global (`x = 1` with no declaration) creates a
+                // configurable global property, so `delete x` returns true.
+                let implicit_global = !self.env.borrow().has(name)
+                    && self.env.borrow().parent.is_none();
+                self.env.borrow_mut().assign(name, value.clone())?;
+                if implicit_global {
+                    self.global
+                        .borrow_mut()
+                        .props
+                        .insert(name.clone(), value);
+                }
+                Ok(())
             }
             Expr::Member { .. } | Expr::Index { .. } => {
                 let r = self.get_ref(target)?;
@@ -2773,6 +2947,92 @@ impl Interpreter {
         // A plain-object assignment shadows a prototype property; the property
         // is now own+enumerable, so drop any inherited non-enumerable marker.
         object.non_enumerable_props.remove(property);
+    }
+
+    /// The `delete` operator's [[Delete]] semantics. Returns `true` when the
+    /// property was removed (or did not exist), `false` when a non-configurable
+    /// own property blocks removal, and throws a TypeError in strict mode when
+    /// removal is blocked (§13.5.1.2).
+    fn delete_property(&self, object: &Value, property: &str) -> JsResult<Value> {
+        let Value::Object(o) = object else {
+            // `delete base[prop]` where base is null/undefined throws a
+            // TypeError (ToObject fails); other primitives are a no-op.
+            if matches!(object, Value::Null | Value::Undefined) {
+                return Err(JsError::type_error(
+                    "cannot convert null or undefined to object",
+                ));
+            }
+            return Ok(Value::Bool(true));
+        };
+        // Array index / length deletion.
+        if let Internal::Array(items) = &mut o.borrow_mut().internal {
+            if property == "length" {
+                return self.delete_blocked("length");
+            }
+            if let Ok(i) = property.parse::<usize>() {
+                if i < items.len() {
+                    items[i] = None;
+                }
+                return Ok(Value::Bool(true));
+            }
+        }
+        let mut obj = o.borrow_mut();
+        let is_own = obj.props.contains_key(property)
+            || obj
+                .props
+                .contains_key(&format!("__get_{property}"))
+            || obj
+                .props
+                .contains_key(&format!("__set_{property}"));
+        if !is_own {
+            // Not an own property: nothing to delete.
+            return Ok(Value::Bool(true));
+        }
+        let non_configurable = obj
+            .non_enumerable_props
+            .contains(&("__configurable_".to_string() + property));
+        if non_configurable {
+            drop(obj);
+            return self.delete_blocked(property);
+        }
+        obj.props.remove(property);
+        obj.props.remove(&format!("__get_{property}"));
+        obj.props.remove(&format!("__set_{property}"));
+        obj.non_enumerable_props.remove(property);
+        obj.non_enumerable_props
+            .remove(&("__writable_".to_string() + property));
+        obj.non_enumerable_props
+            .remove(&("__configurable_".to_string() + property));
+        Ok(Value::Bool(true))
+    }
+
+    /// `delete <identifier>` in sloppy mode. Returns `true` when the name is
+    /// unresolvable or resolves to a configurable global property (built-ins
+    /// such as `JSON`), and `false` for a non-configurable binding (a `var`,
+    /// `let`, `const`, function declaration, or non-configurable global).
+    fn delete_identifier(&self, name: &str) -> bool {
+        if !self.env.borrow().has(name) {
+            return true;
+        }
+        // A global object property that is configurable can be deleted.
+        let global = self.global.borrow();
+        if global.props.contains_key(name) {
+            return !global
+                .non_enumerable_props
+                .contains(&("__configurable_".to_string() + name));
+        }
+        false
+    }
+
+    /// A blocked `delete`: TypeError in strict mode, `false` otherwise.
+    fn delete_blocked(&self, property: &str) -> JsResult<Value> {
+        if self.strict {
+            Err(JsError::type_error(format!(
+                "cannot delete non-configurable property `{property}`"
+            )))
+        } else {
+            Ok(Value::Bool(false))
+        }
     }
 
     fn is_own_enumerable_property(&self, object: &ObjectRef, property: &str) -> bool {
@@ -3023,6 +3283,12 @@ impl Interpreter {
                     None
                 };
                 self.env = Env::child(closure_env);
+                // Set before binding parameters: a default-value expression
+                // may itself call `eval` (e.g. `p = eval("var arguments")`).
+                let saved_param_arguments = self.param_named_arguments;
+                self.param_named_arguments = params
+                    .iter()
+                    .any(|p| Self::pattern_binds_name(p, "arguments"));
                 let this_obj = if let Some(t) = lexical_this {
                     t
                 } else if construct {
@@ -3060,40 +3326,20 @@ impl Interpreter {
                 self.env
                     .borrow_mut()
                     .define("__home__".into(), home_value, false);
-                for (index, pattern) in params.iter().enumerate() {
-                    if let Pattern::Rest(inner) = pattern {
-                        let rest: Vec<Option<Value>> = args
-                            .iter()
-                            .skip(index)
-                            .map(|v| Some(v.clone()))
-                            .collect();
-                        let arr = Object::with_internal(Internal::Array(rest));
-                        arr.borrow_mut().proto = Some(self.array_proto.clone());
-                        self.bind_pattern(inner, Value::Object(arr), true)?;
-                        break;
+                // Bind parameters and build the `arguments` object. For an
+                // async function, a failure here (e.g. a default-value
+                // expression that throws) rejects the returned promise rather
+                // than propagating synchronously.
+                let binding = self.bind_call_params(&params, &args, &func);
+                if let Err(e) = binding {
+                    self.param_named_arguments = saved_param_arguments;
+                    self.env = previous;
+                    self.leave_call();
+                    if is_async {
+                        let v = self.error_to_value(&e);
+                        return Ok(self.make_promise(v, false));
                     }
-                    let value = args.get(index).cloned().unwrap_or(Value::Undefined);
-                    self.bind_pattern(pattern, value, true)?;
-                }
-                // Build the `arguments` object (constructors have one too).
-                {
-                    let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
-                    let args_obj = Object::with_internal(Internal::Array(slots));
-                    args_obj.borrow_mut().proto = Some(self.object_proto.clone());
-                    if self.strict {
-                        // Strict-mode `arguments.callee` is a poison-pill
-                        // accessor: any read or write throws a TypeError.
-                        args_obj.borrow_mut().is_strict_arguments = true;
-                    } else {
-                        Interpreter::define_non_enumerable(
-                            &args_obj,
-                            "callee",
-                            Value::Object(func.clone()),
-                        );
-                    }
-                    self.env
-                        .borrow_mut()
-                        .define("arguments".into(), Value::Object(args_obj), true);
+                    return Err(e);
                 }
                 // A function is strict if its body has a "use strict" directive
                 // (or the enclosing code was already strict).
@@ -3101,6 +3347,7 @@ impl Interpreter {
                 self.detect_strict_mode(&body);
                 let result = self.eval_statements(&body);
                 self.strict = saved_strict;
+                self.param_named_arguments = saved_param_arguments;
                 self.env = previous;
                 self.leave_call();
                 match result? {
@@ -3344,6 +3591,16 @@ impl Interpreter {
                     .map_err(|e| JsError::syntax_error(e.to_string()))?;
                 let program = crate::parser::parse(tokens)
                     .map_err(|e| JsError::syntax_error(e.to_string()))?;
+                // A direct eval inside a function whose parameters include a
+                // binding named `arguments` may not declare `var arguments`
+                // (§19.2.1.3 Additional Early Error Rules for Eval).
+                if self.param_named_arguments
+                    && Self::declares_arguments(&program.statements)
+                {
+                    return Err(JsError::syntax_error(
+                        "eval may not declare 'arguments' when a parameter is named 'arguments'",
+                    ));
+                }
                 // Save state, execute, restore.
                 let saved_env = self.env.clone();
                 let saved_strict = self.strict;
@@ -3444,26 +3701,6 @@ impl Interpreter {
                 // Accessor descriptor: install `__get_`/`__set_` accessors.
                 let getter = desc.props.get("get").cloned();
                 let setter = desc.props.get("set").cloned();
-                if getter.as_ref().is_some_and(|g| g.is_callable()) {
-                    let g = getter.clone().unwrap();
-                    drop(desc);
-                    Self::define_non_enumerable(&target, &format!("__get_{key}"), g);
-                    if let Some(s) = setter.clone().filter(|s| s.is_callable()) {
-                        Self::define_non_enumerable(&target, &format!("__set_{key}"), s);
-                    }
-                    return Ok(Value::Object(target));
-                }
-                if setter.as_ref().is_some_and(|s| s.is_callable()) {
-                    let s = setter.clone().unwrap();
-                    drop(desc);
-                    Self::define_non_enumerable(&target, &format!("__set_{key}"), s);
-                    return Ok(Value::Object(target));
-                }
-                let value = desc.props.get("value").cloned();
-                let writable = desc
-                    .props
-                    .get("writable")
-                    .map_or(true, |v| v.is_truthy());
                 let enumerable = desc
                     .props
                     .get("enumerable")
@@ -3471,7 +3708,31 @@ impl Interpreter {
                 let configurable = desc
                     .props
                     .get("configurable")
-                    .map_or(true, |v| v.is_truthy());
+                    .map_or(false, |v| v.is_truthy());
+                if getter.as_ref().is_some_and(|g| g.is_callable()) {
+                    let g = getter.clone().unwrap();
+                    drop(desc);
+                    Self::define_non_enumerable(&target, &format!("__get_{key}"), g);
+                    if let Some(s) = setter.clone().filter(|s| s.is_callable()) {
+                        Self::define_non_enumerable(&target, &format!("__set_{key}"), s);
+                    }
+                    Self::record_descriptor_flags(&target, &key, enumerable, configurable);
+                    return Ok(Value::Object(target));
+                }
+                if setter.as_ref().is_some_and(|s| s.is_callable()) {
+                    let s = setter.clone().unwrap();
+                    drop(desc);
+                    Self::define_non_enumerable(&target, &format!("__set_{key}"), s);
+                    Self::record_descriptor_flags(&target, &key, enumerable, configurable);
+                    return Ok(Value::Object(target));
+                }
+                let value = desc.props.get("value").cloned();
+                // Object.defineProperty defaults absent attributes to false
+                // (§10.1.6.3 ToPropertyDescriptor / ValidateAndApplyPropertyDescriptor).
+                let writable = desc
+                    .props
+                    .get("writable")
+                    .map_or(false, |v| v.is_truthy());
                 drop(desc);
 
                 if let Some(value) = value {
@@ -6503,9 +6764,10 @@ mod tests {
     }
 
     #[test]
-    fn define_property_defaults_writable_configurable_to_true() {
+    fn define_property_defaults_writable_configurable_to_false() {
+        // Object.defineProperty defaults absent attributes to false.
         let src = "let o={}; Object.defineProperty(o, 'a', {value: 1}); let d=Object.getOwnPropertyDescriptor(o, 'a'); d.writable + ':' + d.configurable;";
-        assert_eq!(run_source(src).unwrap(), Value::String("true:true".into()));
+        assert_eq!(run_source(src).unwrap(), Value::String("false:false".into()));
     }
 
     #[test]

@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-01",
+  "commit": "a4af259",
+  "total": 1000,
+  "pass": 580,
+  "fail": 420,
+  "skip": 0,
+  "pass_rate": 58.0,
+  "pass_rate_total": 58.0,
+  "failure_categories": {
+    "timeout": 0,
+    "parse-error": 7,
+    "runtime-error": 303,
+    "negative-phase-mismatch": 108,
+    "negative-type-mismatch": 0,
+    "negative-but-passed": 2,
+    "async-not-complete": 0,
+    "read-error": 0
+  },
+  "top_failed_categories": {
+    "parse-error": [
+      "test262\\test\\language\\comments\\multi-line-asi-line-separator.js",
+      "test262\\test\\language\\comments\\multi-line-asi-paragraph-separator.js",
+      "test262\\test\\language\\comments\\S7.4_A6.js",
+      "test262\\test\\language\\comments\\hashbang\\function-constructor.js",
+      "test262\\test\\language\\comments\\hashbang\\module.js",
+      "test262\\test\\language\\destructuring\\binding\\typedarray-backed-by-resizable-buffer.js",
+      "test262\\test\\language\\eval-code\\direct\\non-string-object.js"
+    ],
+    "runtime-error": [
+      "test262\\test\\language\\arguments-object\\10.5-7-b-4-s.js",
+      "test262\\test\\language\\arguments-object\\10.5-7-b-1-s.js",
+      "test262\\test\\language\\arguments-object\\10.6-10-c-ii-2.js",
+      "test262\\test\\language\\arguments-object\\10.6-11-b-1.js",
+      "test262\\test\\language\\arguments-object\\10.6-10-c-ii-1.js",
+      "test262\\test\\language\\arguments-object\\10.5-1-s.js",
+      "test262\\test\\language\\arguments-object\\10.6-13-c-1-s.js",
+      "test262\\test\\language\\arguments-object\\10.6-14-c-4-s.js",
+      "test262\\test\\language\\arguments-object\\10.6-13-c-3-s.js",
+      "test262\\test\\language\\arguments-object\\10.6-2gs.js"
+    ],
+    "negative-phase-mismatch": [
+      "test262\\test\\language\\arguments-object\\10.5-1gs.js",
+      "test262\\test\\language\\block-scope\\syntax\\function-declarations\\in-statement-position-do-statement-while-expression.js",
+      "test262\\test\\language\\block-scope\\syntax\\function-declarations\\in-statement-position-if-expression-statement-else-statement.js",
+      "test262\\test\\language\\block-scope\\syntax\\redeclaration\\async-function-name-redeclaration-attempt-with-async-function.js",
+      "test262\\test\\language\\block-scope\\syntax\\function-declarations\\in-statement-position-if-expression-statement.js",
+      "test262\\test\\language\\block-scope\\syntax\\redeclaration\\async-function-name-redeclaration-attempt-with-const.js",
+      "test262\\test\\language\\block-scope\\syntax\\redeclaration\\async-function-name-redeclaration-attempt-with-function.js",
+      "test262\\test\\language\\block-scope\\syntax\\redeclaration\\async-function-name-redeclaration-attempt-with-class.js",
+      "test262\\test\\language\\block-scope\\syntax\\redeclaration\\async-function-name-redeclaration-attempt-with-generator.js",
+      "test262\\test\\language\\block-scope\\syntax\\redeclaration\\async-generator-name-redeclaration-attempt-with-async-generator.js"
+    ],
+    "negative-but-passed": [
+      "test262\\test\\language\\eval-code\\direct\\strict-caller-global.js",
+      "test262\\test\\language\\eval-code\\direct\\var-env-global-lex-non-strict.js"
+    ]
+  },
+  "category_breakdown": {
+    "language": {
+      "pass": 580,
+      "fail": 420
+    }
+  },
+  "elapsed_sec": 44.9,
+  "workers": 16,
+  "filters": {
+    "include": [
+      "language"
+    ],
+    "exclude": null,
+    "limit": 1000
+  }
+}

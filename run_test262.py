@@ -164,11 +164,12 @@ def run_one(path, bin_path, timeout):
                 parts.append(load_include("doneprintHandle.js"))
             for inc in meta["includes"]:
                 parts.append(load_include(inc))
-            body = src
-            if mode == "strict":
-                body = '"use strict";\n' + body
-            parts.append(body)
+            parts.append(src)
             code = "\n".join(parts)
+            # A directive prologue only takes effect at the very start of the
+            # script, so the strict directive must precede the harness too.
+            if mode == "strict":
+                code = '"use strict";\n' + code
 
         tf = tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8")
         try:

@@ -287,8 +287,22 @@ impl Parser {
             self.advance();
         }
         let (name, is_private) = self.class_property_name()?;
+        // A computed name (`computed:...`) is not a static PropName, so the
+        // early errors below only apply to literal names.
+        let is_computed = name.starts_with("computed:");
+        // `#constructor` is a SyntaxError in any class element position.
+        if is_private && name == "constructor" {
+            return Err(self.error("class element may not be named '#constructor'"));
+        }
 
         if is_getter {
+            // `get constructor` is a SyntaxError (SpecialMethod on constructor).
+            if !is_static && !is_computed && name == "constructor" {
+                return Err(self.error("class getter may not be named 'constructor'"));
+            }
+            if is_static && !is_computed && name == "prototype" {
+                return Err(self.error("static class element may not be named 'prototype'"));
+            }
             self.expect(&TokenKind::LeftParen)?;
             self.expect(&TokenKind::RightParen)?;
             self.expect(&TokenKind::LeftBrace)?;
@@ -300,6 +314,12 @@ impl Parser {
             });
         }
         if is_setter {
+            if !is_static && !is_computed && name == "constructor" {
+                return Err(self.error("class setter may not be named 'constructor'"));
+            }
+            if is_static && !is_computed && name == "prototype" {
+                return Err(self.error("static class element may not be named 'prototype'"));
+            }
             self.expect(&TokenKind::LeftParen)?;
             let param = self.param_pattern()?;
             self.expect(&TokenKind::RightParen)?;
@@ -318,6 +338,15 @@ impl Parser {
             if name == "constructor" && !is_static && !is_generator && !is_async && !is_private {
                 return Ok(ClassElement::Constructor { params, body });
             }
+            // A non-static method named `constructor` that is a generator or
+            // async is a SyntaxError (SpecialMethod on constructor).
+            if !is_static && !is_computed && name == "constructor" {
+                return Err(self.error("class method may not be named 'constructor'"));
+            }
+            // `static prototype() {}` is a SyntaxError.
+            if is_static && !is_computed && name == "prototype" {
+                return Err(self.error("static class element may not be named 'prototype'"));
+            }
             return Ok(ClassElement::Method {
                 name,
                 params,
@@ -328,6 +357,14 @@ impl Parser {
             });
         }
         // Field definition: `name` or `name = init`.
+        // A field may not be named `constructor` (any position) or `prototype`
+        // (static position).
+        if !is_computed && name == "constructor" {
+            return Err(self.error("class field may not be named 'constructor'"));
+        }
+        if is_static && !is_computed && name == "prototype" {
+            return Err(self.error("static class element may not be named 'prototype'"));
+        }
         let init = if self.eat(&TokenKind::Assign) {
             Some(Box::new(self.assignment()?))
         } else {
@@ -1069,9 +1106,16 @@ impl Parser {
                 expr: Box::new(self.unary()?),
             })
         } else if self.eat(&TokenKind::Delete) {
+            let operand = self.unary()?;
+            // `delete IdentifierReference` is a SyntaxError in strict mode
+            // (§13.5.1.1). Parenthesised identifiers are not references, so
+            // only a bare identifier triggers the early error.
+            if self.strict && matches!(operand, Expr::Identifier(_)) {
+                return Err(self.error("delete of an unqualified identifier in strict mode"));
+            }
             Ok(Expr::Unary {
                 op: UnaryOp::Delete,
-                expr: Box::new(self.unary()?),
+                expr: Box::new(operand),
             })
         } else if self.eat(&TokenKind::Void) {
             Ok(Expr::Unary {
