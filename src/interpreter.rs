@@ -2225,6 +2225,19 @@ impl Interpreter {
                         }
                     }
                 }
+                // Tag methods with their home object so `super.x` resolves
+                // against the object's prototype.
+                {
+                    let pairs: Vec<Value> =
+                        obj.borrow().props.values().cloned().collect();
+                    for v in pairs {
+                        if let Value::Object(f) = &v
+                            && matches!(f.borrow().internal, Internal::Function { .. })
+                        {
+                            Self::define_non_enumerable(f, "__home__", Value::Object(obj.clone()));
+                        }
+                    }
+                }
                 Ok(Value::Object(obj))
             }
             Expr::Function {
@@ -2490,13 +2503,8 @@ impl Interpreter {
                 Ok((parent, this))
             }
             Expr::Member { object, property } if matches!(object.as_ref(), Expr::Super) => {
-                let parent = self
-                    .env
-                    .borrow()
-                    .get("__super__")
-                    .unwrap_or(Value::Undefined);
-                let proto = self.get_property_on_value(&parent, "prototype");
-                let method = self.get_property_on_value(&proto, property);
+                let base = self.super_base();
+                let method = self.read_property(&base, property)?;
                 let this = self
                     .env
                     .borrow()
@@ -2568,6 +2576,10 @@ impl Interpreter {
                 .get(name)
                 .ok_or_else(|| JsError::reference_error(format!("{name} is not defined"))),
             Expr::Member { object, property } => {
+                if matches!(object.as_ref(), Expr::Super) {
+                    let base = self.super_base();
+                    return self.read_property(&base, property);
+                }
                 let obj = self.eval_expr(object)?;
                 self.deny_strict_arguments_callee_value(&obj, property)?;
                 self.read_property(&obj, property)
@@ -2592,6 +2604,31 @@ impl Interpreter {
             }
         }
         Ok(self.get_property_on_value(object, key))
+    }
+
+    /// The object `super.<prop>` resolves against: for object-literal methods
+    /// it is the home object's prototype; for class methods it is
+    /// `__super__.prototype`.
+    fn super_base(&self) -> Value {
+        let home = self
+            .env
+            .borrow()
+            .get("__home__")
+            .unwrap_or(Value::Undefined);
+        if let Value::Object(h) = &home {
+            return h
+                .borrow()
+                .proto
+                .clone()
+                .map(Value::Object)
+                .unwrap_or(Value::Undefined);
+        }
+        let parent = self
+            .env
+            .borrow()
+            .get("__super__")
+            .unwrap_or(Value::Undefined);
+        self.get_property_on_value(&parent, "prototype")
     }
 
     /// Walk an object's prototype chain looking for `key`.
@@ -3013,6 +3050,16 @@ impl Interpreter {
                 self.env
                     .borrow_mut()
                     .define("__super__".into(), super_value, false);
+                // Object-literal methods carry their home object for `super.x`.
+                let home_value = func
+                    .borrow()
+                    .props
+                    .get("__home__")
+                    .cloned()
+                    .unwrap_or(Value::Undefined);
+                self.env
+                    .borrow_mut()
+                    .define("__home__".into(), home_value, false);
                 for (index, pattern) in params.iter().enumerate() {
                     if let Pattern::Rest(inner) = pattern {
                         let rest: Vec<Option<Value>> = args
