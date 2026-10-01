@@ -50,7 +50,8 @@
 | # | Task | Doc | Status | Effect |
 |---|------|-----|--------|--------|
 | 09 | Baseline test262 pass rate + initial fixes | 09.md | done | language 26.3%→29.35% (2000 sample); added arguments object, eval(), destructuring, strict mode guards, trailing semicolon fix; 2026-09-29 |
-| 10 | Improve test262 pass rate (parse errors, runtime errors) | 10.md | doing | 31.7% (2000 sample); added async function + await, BigInt literals, strict-mode arguments.callee TypeError, strict-mode fn-decl-in-statement-position SyntaxError, named function expressions, ASI edge cases, array elision, computed property names, object spread, globalThis, method definitions; 901 parse + 380 runtime + 83 negative-phase-mismatch remaining; 2026-09-29 17d9729 |
+| 10 | Improve test262 pass rate (parse errors, runtime errors) | 10.md | done | 58.0%→67.4% (1000 language sample); added eval-arguments early errors, lexical redeclaration SyntaxError, class early errors, strict-mode this binding, mapped arguments object, runner strict-prefix fix; 286 runtime + 29 neg-phase remaining; 2026-10-01 7a09c86 |
+| 12 | test262 next features plan (Symbol, for-of, Proxy, WeakMap, etc.) | 11.md | done | Explorer plan: Tier A fixes (mapped args, redecl, strict) + Tier B (for-of +400, Proxy +300, Map/Set +300, class +200, BigInt +70, Date/JSON +200, coercion +100); 2026-10-01 |
 <!-- w1mer:task:test262 -->
 
 (Items awaiting re-prioritization)
