@@ -532,10 +532,24 @@ impl Vm {
                 let object = self.pop();
                 let deleted = match object {
                     Value::Object(o) => {
-                        o.borrow_mut()
-                            .props
-                            .remove(&index.to_string())
-                            .is_some()
+                        let key = index.to_string();
+                        let mut handled = false;
+                        if let Internal::Arguments { slots, mapped } = &mut o.borrow_mut().internal
+                            && let Ok(i) = key.parse::<usize>()
+                        {
+                            if i < slots.len() {
+                                slots[i] = None;
+                            }
+                            if let Some(name) = mapped.remove(&i) {
+                                let _ = self.env.borrow_mut().assign(&name, Value::Undefined);
+                            }
+                            handled = true;
+                        }
+                        if handled {
+                            true
+                        } else {
+                            o.borrow_mut().props.remove(&key).is_some()
+                        }
                     }
                     _ => false,
                 };
@@ -730,7 +744,8 @@ impl Vm {
                         Value::Object(o) => {
                             let b = o.borrow();
                             match &b.internal {
-                                Internal::Array(elements) => {
+                                Internal::Array(elements)
+                                | Internal::Arguments { slots: elements, .. } => {
                                     // Array: iterate by index ("0", "1", ...)
                                     (0..elements.len())
                                         .map(|i| i.to_string())
@@ -879,9 +894,24 @@ impl Vm {
                 // Build the `arguments` object for non-constructor calls.
                 if !construct {
                     let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
-                    let args_obj = Object::with_internal(Internal::Array(slots));
+                    let mapped: HashMap<usize, String> = if self.strict {
+                        HashMap::new()
+                    } else {
+                        params
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, pattern)| match pattern {
+                                Pattern::Identifier(name) => Some((index, name.clone())),
+                                _ => None,
+                            })
+                            .collect()
+                    };
+                    let args_obj =
+                        Object::with_internal(Internal::Arguments { slots, mapped });
                     args_obj.borrow_mut().proto = Some(self.native.object_proto.clone());
-                    if !self.strict {
+                    if self.strict {
+                        args_obj.borrow_mut().is_strict_arguments = true;
+                    } else {
                         Interpreter::define_non_enumerable(
                             &args_obj,
                             "callee",
@@ -1026,7 +1056,12 @@ impl Vm {
                 return self.call(getter, Vec::new(), object.clone(), false);
             }
         }
-        Ok(self.native.get_property_on_value(object, property))
+        // Keep the interpreter's env in sync so mapped `arguments[i]` reads
+        // resolve the aliased parameter binding in the VM's current frame.
+        let saved = std::mem::replace(&mut self.native.env, self.env.clone());
+        let result = self.native.get_property_on_value(object, property);
+        self.native.env = saved;
+        Ok(result)
     }
 
     /// Assign a property value, invoking a class-style setter when present.
@@ -1043,7 +1078,11 @@ impl Vm {
             }
         }
         if let Value::Object(o) = object {
+            // Keep the interpreter's env in sync so a mapped `arguments[i] = v`
+            // write also updates the aliased parameter binding.
+            let saved = std::mem::replace(&mut self.native.env, self.env.clone());
             self.native.set_property(&o, property, value);
+            self.native.env = saved;
         }
         Ok(())
     }

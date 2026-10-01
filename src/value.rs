@@ -37,6 +37,15 @@ pub type ArraySlot = Option<Value>;
 pub enum Internal {
     Plain,
     Array(Vec<ArraySlot>),
+    /// A function's `arguments` object. `slots` holds the indexed argument
+    /// values (like [`Internal::Array`]). In sloppy mode the object is
+    /// "mapped": `mapped` associates an argument index with the name of the
+    /// parameter binding it aliases, so `arguments[i]` and the parameter
+    /// stay in sync. Strict-mode arguments use an empty `mapped` map.
+    Arguments {
+        slots: Vec<ArraySlot>,
+        mapped: HashMap<usize, String>,
+    },
     Function {
         params: Vec<Pattern>,
         body: Vec<Stmt>,
@@ -185,7 +194,7 @@ impl Value {
                     }
                 }
                 match &obj.internal {
-                    Internal::Array(items) => {
+                    Internal::Array(items) | Internal::Arguments { slots: items, .. } => {
                         let parts: Vec<String> = items
                             .iter()
                             .map(|v| match v {
@@ -268,7 +277,7 @@ impl fmt::Display for Value {
                     Internal::Function { .. } | Internal::Native(_) | Internal::Bound { .. } => {
                         write!(f, "function () {{ [native code] }}")
                     }
-                    Internal::Array(items) => {
+                    Internal::Array(items) | Internal::Arguments { slots: items, .. } => {
                         let parts: Vec<String> = items
                             .iter()
                             .map(|v| match v {

@@ -1292,7 +1292,7 @@ impl Interpreter {
                                 keys.push(key.clone());
                             }
                         }
-                        if let Internal::Array(items) = &c.internal {
+                        if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &c.internal {
                             for (i, item) in items.iter().enumerate() {
                                 if item.is_some() {
                                     let s = i.to_string();
@@ -1838,7 +1838,7 @@ impl Interpreter {
             }
             return Ok(out);
         }
-        if let Internal::Array(items) = &o.borrow().internal {
+        if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
             return Ok(items
                 .iter()
                 .map(|v| v.clone().unwrap_or(Value::Undefined))
@@ -1963,7 +1963,22 @@ impl Interpreter {
         }
         // Build the `arguments` object (constructors have one too).
         let slots: Vec<Option<Value>> = args.iter().map(|v| Some(v.clone())).collect();
-        let args_obj = Object::with_internal(Internal::Array(slots));
+        // In sloppy mode `arguments` is mapped: simple identifier parameters
+        // alias their argument slot. Strict mode (and non-simple parameter
+        // lists) get an unmapped object.
+        let mapped: HashMap<usize, String> = if self.strict {
+            HashMap::new()
+        } else {
+            params
+                .iter()
+                .enumerate()
+                .filter_map(|(index, pattern)| match pattern {
+                    Pattern::Identifier(name) => Some((index, name.clone())),
+                    _ => None,
+                })
+                .collect()
+        };
+        let args_obj = Object::with_internal(Internal::Arguments { slots, mapped });
         args_obj.borrow_mut().proto = Some(self.object_proto.clone());
         if self.strict {
             // Strict-mode `arguments.callee` is a poison-pill accessor: any
@@ -2110,7 +2125,7 @@ impl Interpreter {
                 // Prefer the iterator protocol when the source is iterable and
                 // not a plain array, so user iterators drive destructuring.
                 let is_plain_array = matches!(&value, Value::Object(o)
-                    if matches!(o.borrow().internal, Internal::Array(_)));
+                    if matches!(o.borrow().internal, Internal::Array(_) | Internal::Arguments { .. }));
                 let iter_method = if is_plain_array {
                     Value::Undefined
                 } else {
@@ -2245,7 +2260,7 @@ impl Interpreter {
                     result.borrow_mut().props.insert(key.clone(), val.clone());
                 }
             }
-            if let Internal::Array(items) = &source.internal {
+            if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &source.internal {
                 for (i, item) in items.iter().enumerate() {
                     let key = i.to_string();
                     if !consumed.contains(&key)
@@ -2270,7 +2285,7 @@ impl Interpreter {
                     let custom = self.get_property_on_value(&v, "Symbol.iterator").is_callable();
                     if let Value::Object(o) = &v
                         && !custom
-                        && let Internal::Array(items) = &o.borrow().internal
+                        && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                     {
                         for item in items {
                             out.push(item.clone().unwrap_or(Value::Undefined));
@@ -2867,7 +2882,16 @@ impl Interpreter {
     }
 
     pub(crate) fn get_property(&self, object: &ObjectRef, property: &str) -> Value {
-        if let Internal::Array(items) = &object.borrow().internal {
+        // A mapped `arguments[i]` read reflects the current parameter binding,
+        // so writes to the parameter are visible through the arguments object.
+        if let Ok(i) = property.parse::<usize>()
+            && let Internal::Arguments { mapped, .. } = &object.borrow().internal
+            && let Some(name) = mapped.get(&i)
+            && let Some(value) = self.env.borrow().get(name)
+        {
+            return value;
+        }
+        if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &object.borrow().internal {
             if property == "length" {
                 return Value::Number(items.len() as f64);
             }
@@ -2918,7 +2942,14 @@ impl Interpreter {
     }
 
     pub(crate) fn set_property(&self, object: &ObjectRef, property: &str, value: Value) {
-        if let Internal::Array(items) = &mut object.borrow_mut().internal {
+        // A mapped `arguments[i] = v` write also updates the aliased parameter.
+        if let Ok(i) = property.parse::<usize>()
+            && let Internal::Arguments { mapped, .. } = &object.borrow().internal
+            && let Some(name) = mapped.get(&i).cloned()
+        {
+            let _ = self.env.borrow_mut().assign(&name, value.clone());
+        }
+        if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &mut object.borrow_mut().internal {
             if property == "length" {
                 let n = value.to_number();
                 if n.is_finite() && n >= 0.0 && n.fract() == 0.0 {
@@ -2964,8 +2995,24 @@ impl Interpreter {
             }
             return Ok(Value::Bool(true));
         };
+        // Arguments object index / length deletion: break any mapping and
+        // clear the slot.
+        if let Internal::Arguments { slots, mapped } = &mut o.borrow_mut().internal {
+            if property == "length" {
+                return self.delete_blocked("length");
+            }
+            if let Ok(i) = property.parse::<usize>() {
+                if i < slots.len() {
+                    slots[i] = None;
+                }
+                if let Some(name) = mapped.remove(&i) {
+                    let _ = self.env.borrow_mut().assign(&name, Value::Undefined);
+                }
+                return Ok(Value::Bool(true));
+            }
+        }
         // Array index / length deletion.
-        if let Internal::Array(items) = &mut o.borrow_mut().internal {
+        if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &mut o.borrow_mut().internal {
             if property == "length" {
                 return self.delete_blocked("length");
             }
@@ -3037,7 +3084,7 @@ impl Interpreter {
 
     fn is_own_enumerable_property(&self, object: &ObjectRef, property: &str) -> bool {
         let object = object.borrow();
-        if let Internal::Array(items) = &object.internal {
+        if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &object.internal {
             if property == "length" {
                 return false;
             }
@@ -3075,7 +3122,7 @@ impl Interpreter {
 
     fn get_own_property_descriptor(&self, object: &ObjectRef, property: &str) -> Value {
         let object = object.borrow();
-        if let Internal::Array(items) = &object.internal {
+        if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &object.internal {
             if property == "length" {
                 return self.data_descriptor(Value::Number(items.len() as f64), true, false, false);
             }
@@ -3289,6 +3336,10 @@ impl Interpreter {
                 self.param_named_arguments = params
                     .iter()
                     .any(|p| Self::pattern_binds_name(p, "arguments"));
+                // Detect strict mode BEFORE binding `this`: in strict mode,
+                // non-method calls get `this === undefined` (not the global).
+                let saved_strict = self.strict;
+                self.detect_strict_mode(&body);
                 let this_obj = if let Some(t) = lexical_this {
                     t
                 } else if construct {
@@ -3301,6 +3352,10 @@ impl Interpreter {
                         obj.borrow_mut().proto = Some(self.object_proto.clone());
                     }
                     Value::Object(obj)
+                } else if self.strict {
+                    // Strict non-constructor call: this is the passed value
+                    // (undefined/null for plain calls).
+                    this_value.clone()
                 } else {
                     this_value
                 };
@@ -3341,10 +3396,6 @@ impl Interpreter {
                     }
                     return Err(e);
                 }
-                // A function is strict if its body has a "use strict" directive
-                // (or the enclosing code was already strict).
-                let saved_strict = self.strict;
-                self.detect_strict_mode(&body);
                 let result = self.eval_statements(&body);
                 self.strict = saved_strict;
                 self.param_named_arguments = saved_param_arguments;
@@ -3481,7 +3532,7 @@ impl Interpreter {
                 let values = args.first().cloned().unwrap_or(Value::Undefined);
                 let mut out = Vec::new();
                 if let Value::Object(o) = &values
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     for item in items {
                         let v = item.clone().unwrap_or(Value::Undefined);
@@ -3524,7 +3575,7 @@ impl Interpreter {
             "Array.prototype.Symbol.iterator" | "String.prototype.Symbol.iterator" => {
                 let items: Vec<Option<Value>> =
                     if let Value::Object(o) = &this_value {
-                        if let Internal::Array(items) = &o.borrow().internal {
+                        if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                             items.clone()
                         } else {
                             Vec::new()
@@ -3555,7 +3606,7 @@ impl Interpreter {
                         Some(Value::Number(n)) => *n,
                         _ => 0.0,
                     };
-                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                    let items = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
@@ -3665,7 +3716,7 @@ impl Interpreter {
                 };
                 let object = object.borrow();
                 let mut keys = Vec::new();
-                if let Internal::Array(items) = &object.internal {
+                if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &object.internal {
                     keys.extend(
                         items
                             .iter()
@@ -3825,7 +3876,7 @@ impl Interpreter {
             "Function.prototype.apply" => {
                 let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
                 let apply_args = if let Some(Value::Object(o)) = args.get(1)
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     items.iter().filter_map(|v| v.clone()).collect()
                 } else if args.len() > 1 {
@@ -3968,8 +4019,8 @@ impl Interpreter {
                 };
                 let object = object.borrow();
                 let mut values = Vec::new();
-                let is_array = matches!(&object.internal, Internal::Array(_));
-                if let Internal::Array(items) = &object.internal {
+                let is_array = matches!(&object.internal, Internal::Array(_) | Internal::Arguments { .. });
+                if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &object.internal {
                     values.extend(items.iter().filter_map(Clone::clone));
                 }
                 let mut named_keys = object.props.keys().cloned().collect::<Vec<_>>();
@@ -4007,7 +4058,7 @@ impl Interpreter {
                     return Ok(Value::Bool(false));
                 };
                 let object = object.borrow();
-                let has_array_index = if let Internal::Array(items) = &object.internal {
+                let has_array_index = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &object.internal {
                     key.parse::<usize>()
                         .is_ok_and(|index| items.get(index).is_some_and(Option::is_some))
                         || key == "length"
@@ -4057,7 +4108,7 @@ impl Interpreter {
             "Array.prototype.toString" => {
                 // Array.prototype.toString === join with "," separator.
                 if let Value::Object(o) = &this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     let mut parts = Vec::with_capacity(items.len());
                     for v in items {
@@ -4077,7 +4128,7 @@ impl Interpreter {
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| ",".into());
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     return Ok(Value::String(
                         items
@@ -4097,7 +4148,7 @@ impl Interpreter {
                     .unwrap_or(Value::Number(0.0))
                     .to_number();
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     let len = items.len() as isize;
                     let mut start = if from_index.is_nan() {
@@ -4126,7 +4177,7 @@ impl Interpreter {
                     .unwrap_or(Value::Number(0.0))
                     .to_number();
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     let len = items.len() as isize;
                     let mut start = if from_index.is_nan() {
@@ -4150,7 +4201,7 @@ impl Interpreter {
             }
             "Array.prototype.push" => {
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &mut o.borrow_mut().internal
                 {
                     items.extend(args.into_iter().map(Some));
                     return Ok(Value::Number(items.len() as f64));
@@ -4159,7 +4210,7 @@ impl Interpreter {
             }
             "Array.prototype.slice" => {
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     let len = items.len() as isize;
                     let start = args
@@ -4188,7 +4239,7 @@ impl Interpreter {
             }
             "Array.prototype.pop" => {
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &mut o.borrow_mut().internal
                 {
                     return Ok(items.pop().flatten().unwrap_or(Value::Undefined));
                 }
@@ -4196,7 +4247,7 @@ impl Interpreter {
             }
             "Array.prototype.shift" => {
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &mut o.borrow_mut().internal
                 {
                     if items.is_empty() {
                         return Ok(Value::Undefined);
@@ -4209,7 +4260,7 @@ impl Interpreter {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
                     let source_array = Value::Object(o.clone());
-                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                    let items = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
@@ -4244,7 +4295,7 @@ impl Interpreter {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
                     let source_array = Value::Object(o.clone());
-                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                    let items = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
@@ -4280,7 +4331,7 @@ impl Interpreter {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
                     let source_array = Value::Object(o.clone());
-                    let initial_len = if let Internal::Array(items) = &o.borrow().internal {
+                    let initial_len = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.len()
                     } else {
                         0
@@ -4288,7 +4339,7 @@ impl Interpreter {
                     for index in 0..initial_len {
                         let value = {
                             let object = o.borrow();
-                            if let Internal::Array(items) = &object.internal {
+                            if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &object.internal {
                                 items.get(index).cloned().flatten()
                             } else {
                                 None
@@ -4309,7 +4360,7 @@ impl Interpreter {
             }
             "Array.prototype.splice" => {
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &mut o.borrow_mut().internal
                 {
                     let len = items.len();
                     let start = args
@@ -4342,7 +4393,7 @@ impl Interpreter {
             }
             "Array.prototype.unshift" => {
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &mut o.borrow_mut().internal
                 {
                     let head: Vec<Option<Value>> = args.into_iter().map(Some).collect();
                     items.splice(0..0, head);
@@ -4353,7 +4404,7 @@ impl Interpreter {
             "Array.prototype.sort" => {
                 let compare_fn = args.first().cloned();
                 let items = if let Value::Object(ref o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     items.clone()
                 } else {
@@ -4384,7 +4435,7 @@ impl Interpreter {
                     });
                 }
                 if let Value::Object(ref o) = this_value
-                    && let Internal::Array(arr) = &mut o.borrow_mut().internal
+                    && let Internal::Array(arr) | Internal::Arguments { slots: arr, .. } = &mut o.borrow_mut().internal
                 {
                     *arr = items;
                     return Ok(Value::Object(o.clone()));
@@ -4393,7 +4444,7 @@ impl Interpreter {
             }
             "Array.prototype.reverse" => {
                 if let Value::Object(ref o) = this_value
-                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &mut o.borrow_mut().internal
                 {
                     items.reverse();
                     return Ok(Value::Object(o.clone()));
@@ -4403,7 +4454,7 @@ impl Interpreter {
             "Array.prototype.concat" => {
                 let mut result: Vec<Option<Value>> = Vec::new();
                 if let Value::Object(ref o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     result.extend(items.iter().cloned());
                 } else {
@@ -4411,7 +4462,7 @@ impl Interpreter {
                 }
                 for arg in &args {
                     if let Value::Object(o) = arg
-                        && let Internal::Array(items) = &o.borrow().internal
+                        && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                     {
                         result.extend(items.iter().cloned());
                     } else {
@@ -4428,7 +4479,7 @@ impl Interpreter {
                 let initial = args.get(1).cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
                     let source_array = Value::Object(o.clone());
-                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                    let items = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
@@ -4457,7 +4508,7 @@ impl Interpreter {
                 let initial = args.get(1).cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
                     let source_array = Value::Object(o.clone());
-                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                    let items = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
@@ -4489,7 +4540,7 @@ impl Interpreter {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
                     let source_array = Value::Object(o.clone());
-                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                    let items = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
@@ -4513,7 +4564,7 @@ impl Interpreter {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
                     let source_array = Value::Object(o.clone());
-                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                    let items = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
@@ -4537,7 +4588,7 @@ impl Interpreter {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
                     let source_array = Value::Object(o.clone());
-                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                    let items = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
@@ -4561,7 +4612,7 @@ impl Interpreter {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value {
                     let source_array = Value::Object(o.clone());
-                    let items = if let Internal::Array(items) = &o.borrow().internal {
+                    let items = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
@@ -4584,7 +4635,7 @@ impl Interpreter {
             "Array.prototype.fill" => {
                 let fill_value = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(ref o) = this_value
-                    && let Internal::Array(items) = &mut o.borrow_mut().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &mut o.borrow_mut().internal
                 {
                     let len = items.len() as isize;
                     let start = args.get(1).map(|v| v.to_number()).unwrap_or(0.0);
@@ -4603,7 +4654,7 @@ impl Interpreter {
             "Array.prototype.flat" => {
                 let depth = args.first().map(|v| v.to_number()).unwrap_or(1.0);
                 let src_items = if let Value::Object(ref o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     items.clone()
                 } else {
@@ -4613,7 +4664,7 @@ impl Interpreter {
                     let mut result = Vec::new();
                     for item in items {
                         if let Some(Value::Object(o)) = item
-                            && let Internal::Array(inner) = &o.borrow().internal
+                            && let Internal::Array(inner) | Internal::Arguments { slots: inner, .. } = &o.borrow().internal
                             && depth > 0.0
                         {
                             result.extend(flatten(inner, depth - 1.0));
@@ -4631,7 +4682,7 @@ impl Interpreter {
             "Array.prototype.lastIndexOf" => {
                 let needle = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     let len = items.len() as isize;
                     let from_index = args.get(1).map(|v| v.to_number()).unwrap_or(len as f64);
@@ -4656,7 +4707,7 @@ impl Interpreter {
             "Array.prototype.at" => {
                 let index = args.first().map(|v| v.to_number()).unwrap_or(f64::NAN);
                 if let Value::Object(o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     let len = items.len() as isize;
                     let pos = if index.is_nan() {
@@ -4682,7 +4733,7 @@ impl Interpreter {
                 let mut result = Vec::new();
                 let source = args.first().cloned().unwrap_or(Value::Undefined);
                 if let Value::Object(o) = &source {
-                    let length = if let Internal::Array(items) = &o.borrow().internal {
+                    let length = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                         items.len()
                     } else {
                         o.borrow()
@@ -4692,7 +4743,7 @@ impl Interpreter {
                             .unwrap_or(0)
                     };
                     for i in 0..length {
-                        let val = if let Internal::Array(items) = &o.borrow().internal {
+                        let val = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal {
                             items.get(i).cloned().flatten().unwrap_or(Value::Undefined)
                         } else {
                             o.borrow()
@@ -5144,7 +5195,7 @@ impl Interpreter {
                 };
                 let obj = obj.borrow();
                 let mut result: Vec<Option<Value>> = Vec::new();
-                if let Internal::Array(items) = &obj.internal {
+                if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &obj.internal {
                     for (i, item) in items.iter().enumerate() {
                         if item.is_some() {
                             let pair = vec![Some(Value::String(i.to_string())), item.clone()];
@@ -5172,7 +5223,7 @@ impl Interpreter {
                 let obj = Object::plain();
                 obj.borrow_mut().proto = Some(self.object_proto.clone());
                 if let Value::Object(entries) = args.first().cloned().unwrap_or(Value::Undefined) {
-                    let items = if let Internal::Array(items) = &entries.borrow().internal {
+                    let items = if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &entries.borrow().internal {
                         items.clone()
                     } else {
                         Vec::new()
@@ -5182,7 +5233,7 @@ impl Interpreter {
                             continue;
                         };
                         let pair = pair_obj.borrow();
-                        if let Internal::Array(pair_items) = &pair.internal {
+                        if let Internal::Array(pair_items) | Internal::Arguments { slots: pair_items, .. } = &pair.internal {
                             if let (Some(key_v), Some(value_v)) = (pair_items.first(), pair_items.get(1)) {
                                 if let (Some(key), Some(value)) = (key_v.as_ref(), value_v.as_ref()) {
                                     let key = key.to_string();
@@ -5244,7 +5295,7 @@ impl Interpreter {
                 };
                 let obj = obj.borrow();
                 let mut names: Vec<Option<Value>> = Vec::new();
-                if let Internal::Array(items) = &obj.internal {
+                if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &obj.internal {
                     names.push(Some(Value::String("length".into())));
                     for (i, item) in items.iter().enumerate() {
                         if item.is_some() { names.push(Some(Value::String(i.to_string()))); }
@@ -5351,7 +5402,7 @@ impl Interpreter {
             }
             "Array.prototype.entries" => {
                 if let Value::Object(ref o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     let mut arr = Vec::new();
                     for (i, v) in items.iter().enumerate() {
@@ -5364,7 +5415,7 @@ impl Interpreter {
             }
             "Array.prototype.keys" => {
                 if let Value::Object(ref o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     let arr: Vec<Value> = (0..items.len()).map(|i| Value::Number(i as f64)).collect();
                     return Ok(Value::Object(make_iterator(arr, 0)));
@@ -5373,7 +5424,7 @@ impl Interpreter {
             }
             "Array.prototype.values" => {
                 if let Value::Object(ref o) = this_value
-                    && let Internal::Array(items) = &o.borrow().internal
+                    && let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &o.borrow().internal
                 {
                     let arr: Vec<Value> = items.iter().filter_map(|v| v.clone()).collect();
                     return Ok(Value::Object(make_iterator(arr, 0)));
@@ -5461,7 +5512,7 @@ impl Interpreter {
                 };
                 let obj = target.borrow();
                 let mut keys: Vec<Option<Value>> = Vec::new();
-                if let Internal::Array(items) = &obj.internal {
+                if let Internal::Array(items) | Internal::Arguments { slots: items, .. } = &obj.internal {
                     for (i, item) in items.iter().enumerate() {
                         if item.is_some() {
                             keys.push(Some(Value::String(i.to_string())));
@@ -5557,7 +5608,7 @@ impl Interpreter {
                 Value::Object(o) => {
                     let obj = o.borrow();
                     match &obj.internal {
-                        Internal::Array(items) => {
+                        Internal::Array(items) | Internal::Arguments { slots: items, .. } => {
                             let parts: Vec<String> = items.iter()
                                 .map(|v| match v {
                                     Some(v) => stringify_impl(v).unwrap_or_else(|_| "null".into()),
